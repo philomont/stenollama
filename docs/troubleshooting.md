@@ -29,10 +29,10 @@ Evidence gathered:
   (LP #2122289 switched gdk-pixbuf to wrap glycin; related: LP #2171362).
 
 **Workarounds (require sudo or newer packages):**
-1. Best: install glycin ≥ 2.2.0 (e.g. Debian's `libglycin-2-0` +
-   `glycin-loaders` 2.2.x .debs; soname-compatible) — contains the deadlock
-   fix and honors `GLYCIN_DISABLE_SANDBOX=i-know-the-risks`.
-2. Track/request the Ubuntu SRU for glycin 2.2.x on resolute.
+1. Best: run `scripts/fix-glycin-deadlock.sh` from this repo — it installs
+   Debian's glycin 2.2.3 (soname-compatible, checksum-pinned, with rollback)
+   and contains the deadlock fix plus `GLYCIN_DISABLE_SANDBOX` support.
+2. Or wait for the Ubuntu SRU (track LP #2171362).
 3. NOT recommended: `WEBKIT_DISABLE_DMABUF_RENDERER=1` — on WebKitGTK 2.52 +
    Mesa 26 this aborts the WebProcess instead (cc-switch#6514).
 

@@ -1,0 +1,24 @@
+# Node
+node_modules/
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# App data
+notebooks/
+*.sqlite
+*.sqlite-journal
+*.wav
+*.opus
+
+# Env & secrets
+.env
+.env.*
+
+# Editors
+.DS_Store
+*.swp
+.idea/
+.vscode/

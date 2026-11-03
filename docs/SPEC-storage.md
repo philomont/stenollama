@@ -96,6 +96,21 @@ Some prose. Timestamps never appear inline; anchoring is in front-matter.
 {"schemaVersion":0,"id":"hl-000001","noteId":"note-000001","segments":["seg-000123","seg-000124"],"color":"accent","createdAt":"..."}
 ```
 
+### `margin.jsonl`
+
+One entry per line — the margin column: human/AI comments loosely linked to
+the tape **and** the note block being typed, plus selection-anchored chats.
+
+```json
+{"schemaVersion":0,"createdAt":"...","kind":"comment","author":"human|ai","atSec":142.1,"noteContext":"..." ,"model":"glm-5.2:cloud","text":"..."}
+{"schemaVersion":0,"createdAt":"...","kind":"chat","author":"human->ai","atSec":180.4,"selection":"...","question":"...","model":"glm-5.2:cloud","text":"..."}
+```
+
+- `atSec` is a loose anchor (typing position in the tape, or selection time).
+- `noteContext` snapshots the note block the user was writing when the entry
+  landed — the time+context link.
+- `model` is present on AI entries for provenance.
+
 ### `distillations/<...>.md`
 
 ```markdown

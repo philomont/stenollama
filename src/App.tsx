@@ -30,11 +30,18 @@ interface EngineInfo {
   label: string;
 }
 
-interface MarginComment {
-  id: number;
-  author: "human" | "ai";
-  atSec: number | null; // loose anchor into the session timeline
+// A margin entry: a human/AI comment anchored to time + note block, or a
+// selection-anchored chat thread.
+interface MarginEntry {
+  id?: string;
+  createdAt?: string;
+  kind: "comment" | "chat";
+  author: "human" | "ai" | "human->ai";
+  atSec: number | null;
+  noteContext?: string | null;
   text: string;
+  selection?: string;
+  question?: string;
 }
 
 function fmtClock(sec: number): string {
@@ -49,6 +56,12 @@ function fmtStamp(sec: number): string {
   const s = Math.floor(sec % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
+
+// AI typing-trigger debounce: fire once the user pauses after typing enough.
+const AI_TRIGGER_IDLE_MS = 6000;
+const AI_TRIGGER_MIN_CHARS = 40;
+// Human margin-comment idle (seconds of transcript to include in AI context).
+const AI_CONTEXT_WINDOW_SEC = 60;
 
 export default function App() {
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
@@ -66,17 +79,48 @@ export default function App() {
   const [engine, setEngine] = useState<EngineInfo | null>(null);
 
   // Margin.
-  const [margin, setMargin] = useState<MarginComment[]>([]);
+  const [margin, setMargin] = useState<MarginEntry[]>([]);
   const [marginDraft, setMarginDraft] = useState("");
-  const nextId = useRef(1);
+  const [aiThinking, setAiThinking] = useState(false);
+
+  // Selection chat state.
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [selectionOrigin, setSelectionOrigin] = useState<null | "transcript" | "notes">(null);
+  const [chatDraft, setChatDraft] = useState("");
+
+  // AI typing-trigger bookkeeping.
+  const lastNoteEdit = useRef(0);
+  const charsSinceAi = useRef(0);
+  const aiPending = useRef(false);
+  const lastAiAt = useRef(0);
+  const segmentsRef = useRef<TranscriptSegment[]>([]);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+  const recordingRef = useRef(false);
+  const sessionDirRef = useRef<string | null>(null);
+  const elapsedRef = useRef(0);
+  const notesRef = useRef("");
+
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+  useEffect(() => {
+    elapsedRef.current = elapsed;
+  }, [elapsed]);
+  useEffect(() => {
+    notesRef.current = noteText;
+  }, [noteText]);
 
   useEffect(() => {
     backend()
       .then((b) => b.invoke<OllamaStatus>("ollama_status"))
       .then(setOllama)
-      .catch(() => setOllama({ local_online: false, local_version: null, cloud_online: false }));
+      .catch(() =>
+        setOllama({ local_online: false, local_version: null, cloud_online: false }),
+      );
   }, []);
 
   useEffect(() => {
@@ -94,6 +138,7 @@ export default function App() {
           setRecording(false);
           setElapsed(e.duration_sec);
           setLastSession(e.session_dir);
+          sessionDirRef.current = null;
         }),
         b.listen<TranscriptSegment>("transcript:segment", (seg) => {
           setSegments((prev) => [...prev, seg]);
@@ -123,7 +168,109 @@ export default function App() {
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
-  }, [margin]);
+  }, [margin, aiThinking]);
+
+  // ---- AI margin trigger: typing pauses during capture ----
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (
+        !recordingRef.current ||
+        aiPending.current ||
+        sessionDirRef.current === null ||
+        Date.now() - lastNoteEdit.current < AI_TRIGGER_IDLE_MS ||
+        charsSinceAi.current < AI_TRIGGER_MIN_CHARS ||
+        Date.now() - lastAiAt.current < 15000
+      ) {
+        return;
+      }
+      const atSec = elapsedRef.current;
+      const noteBlock = lastNoteBlock(notesRef.current);
+      const transcriptWindow = transcriptWindowText(segmentsRef.current, atSec);
+      const sessionDir = sessionDirRef.current;
+      const typed = charsSinceAi.current;
+      charsSinceAi.current = 0;
+      aiPending.current = true;
+      lastAiAt.current = Date.now();
+      setAiThinking(true);
+      backend()
+        .then((b) =>
+          b.invoke<MarginEntry | null>("ai_margin_comment", {
+            atSec,
+            noteBlock,
+            transcriptWindow,
+            sessionDir,
+          }),
+        )
+        .then((entry) => {
+          if (entry) setMargin((m) => [...m, entry]);
+        })
+        .catch(() => {})
+        .finally(() => {
+          aiPending.current = false;
+          setAiThinking(false);
+        });
+      // typed is consumed above via charsSinceAi reset
+      void typed;
+    }, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // ---- selection chat ----
+  function selectionContext(origin: "transcript" | "notes"): string {
+    if (origin === "notes") return notesRef.current.slice(-1200);
+    return segmentsRef.current
+      .slice(-8)
+      .map((s) => s.text)
+      .join(" ");
+  }
+
+  useEffect(() => {
+    function onMouseUp() {
+      const sel = window.getSelection();
+      const text = sel?.toString().trim() ?? "";
+      if (text.length < 12 || !sel || sel.rangeCount === 0) {
+        setPendingSelection(null);
+        return;
+      }
+      const anchor = sel.anchorNode;
+      if (!anchor) return;
+      const inTranscript = !!(anchor.parentElement?.closest?.(".transcript"));
+      const inNotes = !!(anchor.parentElement?.closest?.(".notes-input"));
+      if (!inTranscript && !inNotes) {
+        setPendingSelection(null);
+        return;
+      }
+      setPendingSelection(text);
+      setSelectionOrigin(inTranscript ? "transcript" : "notes");
+    }
+    document.addEventListener("mouseup", onMouseUp);
+    return () => document.removeEventListener("mouseup", onMouseUp);
+  }, []);
+
+  async function sendSelectionChat() {
+    if (!pendingSelection || !chatDraft.trim()) return;
+    const b = await backend();
+    const sessionDir =
+      sessionDirRef.current ||
+      (lastSession ?? "") ||
+      `${sessionDirPlaceholder()}`;
+    const question = chatDraft.trim();
+    const selection = pendingSelection;
+    setChatDraft("");
+    setPendingSelection(null);
+    setAiThinking(true);
+    try {
+      const entry = await b.invoke<MarginEntry>("ai_selection_chat", {
+        selection,
+        question,
+        atSec: recording ? elapsed : null,
+        context: selectionContext(selectionOrigin ?? "transcript"),        sessionDir,
+      });
+      if (entry) setMargin((m) => [...m, entry]);
+    } finally {
+      setAiThinking(false);
+    }
+  }
 
   async function toggleRecord() {
     setError(null);
@@ -131,11 +278,13 @@ export default function App() {
     try {
       const b = await backend();
       if (!recording) {
-        await b.invoke("capture_start", { notebook: "Inbox" });
+        const dir = await b.invoke<string>("capture_start", { notebook: "Inbox" });
+        sessionDirRef.current = dir;
         setRecording(true);
         setElapsed(0);
         setSegments([]);
         setLastSession(null);
+        charsSinceAi.current = 0;
       } else {
         await b.invoke("capture_stop");
       }
@@ -145,19 +294,37 @@ export default function App() {
     }
   }
 
-  function addMarginComment() {
+  function onNoteChange(text: string) {
+    setNoteText(text);
+    if (recording) {
+      lastNoteEdit.current = Date.now();
+      charsSinceAi.current += Math.max(1, text.length - notesRef.current.length);
+    }
+  }
+
+  async function addMarginComment() {
     const text = marginDraft.trim();
     if (!text) return;
+    const atSec = recording ? elapsed : null;
+    const noteContext = recording ? lastNoteBlock(notesRef.current) : null;
+    setMarginDraft("");
     setMargin((m) => [
       ...m,
       {
-        id: nextId.current++,
+        kind: "comment",
         author: "human",
-        atSec: recording ? elapsed : null,
+        atSec,
+        noteContext,
         text,
       },
     ]);
-    setMarginDraft("");
+    const b = await backend();
+    b.invoke("margin_add", {
+      sessionDir: sessionDirRef.current || lastSession || "",
+      atSec,
+      noteContext,
+      text,
+    }).catch(() => {});
   }
 
   const statusOk = (ollama?.local_online || ollama?.cloud_online) ?? false;
@@ -194,14 +361,10 @@ export default function App() {
                     ? "cloud"
                     : "Ollama offline"}
           </div>
+          {engine && <p className="engine-line">asr: {engine.label}</p>}
           {lastSession && (
             <p className="last-session" title={lastSession}>
               last: {lastSession.split("/").pop()}
-            </p>
-          )}
-          {engine && (
-            <p className="engine-line">
-              asr: {engine.label}
             </p>
           )}
         </div>
@@ -239,7 +402,7 @@ export default function App() {
                 {segments.length === 0 ? (
                   <p className="placeholder">
                     {recording
-                      ? "listening… speech is transcribed here every few seconds (gemma4, local)."
+                      ? "listening… speech is transcribed here every few seconds (whisper, local)."
                       : "press Record — the pad fills with a live transcript as you listen."}
                   </p>
                 ) : (
@@ -254,33 +417,71 @@ export default function App() {
               <textarea
                 className="notes-input"
                 value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Take notes while listening — each line is anchored to the tape."
+                onChange={(e) => onNoteChange(e.target.value)}
+                placeholder="Take notes while listening — each line is anchored to the tape; the AI reads your margin only when you write."
               />
             </div>
 
             <div className="pad-col margin-col">
               <div className="margin-feed" ref={feedRef}>
-                {margin.length === 0 ? (
+                {margin.length === 0 && !aiThinking && (
                   <p className="placeholder">
-                    Margin notes — yours and AI's, loosely pegged to the tape.
+                    The margin is quiet unless you are: type notes while
+                    recording for AI comments pegged to your note and the
+                    tape, or select any passage to chat with the AI about it.
                   </p>
-                ) : (
-                  margin.map((c) => (
-                    <div key={c.id} className={`margin-entry ${c.author}`}>
+                )}
+                {margin.map((m, i) =>
+                  m.kind === "chat" ? (
+                    <div key={m.id ?? i} className="margin-entry chat">
                       <span className="margin-meta">
-                        <span className={`author ${c.author}`}>
-                          {c.author === "human" ? "you" : "AI"}
+                        <span className="author ai">selection chat</span>
+                        {m.atSec !== null && <span className="margin-time">≈ {fmtStamp(m.atSec)}</span>}
+                      </span>
+                      <p className="chat-selection">“{clip(m.selection, 140)}”</p>
+                      <p className="chat-question">{m.question}</p>
+                      <p className="margin-text">{m.text}</p>
+                    </div>
+                  ) : (
+                    <div key={m.id ?? i} className={`margin-entry ${m.author === "ai" ? "ai" : "human"}`}>
+                      <span className="margin-meta">
+                        <span className={`author ${m.author}`}>
+                          {m.author === "ai" ? "AI" : "you"}
                         </span>
-                        {c.atSec !== null && (
-                          <span className="margin-time">≈ {fmtStamp(c.atSec)}</span>
+                        {m.atSec !== null && (
+                          <span className="margin-time">≈ {fmtStamp(m.atSec)}</span>
                         )}
                       </span>
-                      <p className="margin-text">{c.text}</p>
+                      {m.noteContext && (
+                        <p className="note-quote">re: “{clip(m.noteContext, 90)}”</p>
+                      )}
+                      <p className="margin-text">{m.text}</p>
                     </div>
-                  ))
+                  ),
                 )}
+                {aiThinking && <p className="ai-thinking">AI is writing…</p>}
               </div>
+
+              {pendingSelection && (
+                <div className="chat-box">
+                  <p className="chat-box-src">{selectionOrigin} selection:</p>
+                  <p className="chat-box-quote">“{clip(pendingSelection, 160)}”</p>
+                  <input
+                    autoFocus
+                    value={chatDraft}
+                    onChange={(e) => setChatDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && sendSelectionChat()}
+                    placeholder="ask the AI about this passage…"
+                  />
+                  <div className="chat-box-actions">
+                    <button onClick={sendSelectionChat}>Ask</button>
+                    <button className="ghost" onClick={() => setPendingSelection(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="margin-input">
                 <input
                   value={marginDraft}
@@ -288,7 +489,7 @@ export default function App() {
                   onKeyDown={(e) => e.key === "Enter" && addMarginComment()}
                   placeholder={
                     recording
-                      ? `pegged @ ${fmtStamp(elapsed)} — enter`
+                      ? `margin note @ ${fmtStamp(elapsed)} — enter`
                       : "add a margin note…"
                   }
                 />
@@ -297,10 +498,33 @@ export default function App() {
           </div>
         </section>
 
-        {(error || asrError) && (
-          <div className="error-banner">{error ?? asrError}</div>
-        )}
+        {(error || asrError) && <div className="error-banner">{error ?? asrError}</div>}
       </main>
     </div>
   );
+}
+
+// ---- helpers ----
+
+function lastNoteBlock(notes: string): string {
+  const blocks = notes.split(/\n\s*\n/).filter(Boolean);
+  return (blocks[blocks.length - 1] || notes).trim();
+}
+
+function transcriptWindowText(segments: TranscriptSegment[], atSec: number): string {
+  const from = Math.max(0, atSec - AI_CONTEXT_WINDOW_SEC);
+  return segments
+    .filter((s) => s.end >= from)
+    .map((s) => s.text)
+    .join(" ")
+    .slice(-1500);
+}
+
+function sessionDirPlaceholder(): string {
+  return "notebooks/Inbox/sessions/unsaved";
+}
+
+function clip(text: string | null | undefined, max: number): string {
+  if (!text) return "";
+  return text.length > max ? text.slice(0, max) + "…" : text;
 }

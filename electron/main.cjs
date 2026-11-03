@@ -563,6 +563,162 @@ function startAsrLoop(s) {
   };
 }
 
+// ---------------------------------------------------- margin llm
+// Cloud text models via the local Ollama daemon (user direction: cloud for
+// text, local for audio). Margin comments + selection chat run on this model.
+const LLM_MODEL_ENV = process.env.STENO_LLM_MODEL || "";
+const LLM_MODEL_PREFS = [
+  "glm-5.3-flash:cloud",
+  "glm-5.2:cloud",
+  "qwen3.5:cloud",
+  "gemma4:cloud",
+  "minimax-m3.1-flash:cloud",
+];
+
+async function resolveLlmModel() {
+  if (LLM_MODEL_ENV) return LLM_MODEL_ENV;
+  try {
+    const resp = await fetch(`${OLLAMA_LOCAL}/api/tags`);
+    if (resp.ok) {
+      const { models = [] } = await resp.json();
+      const names = new Set();
+      for (const m of models) {
+        names.add(m.name);
+        names.add(m.name.split(":")[0]);
+      }
+      for (const candidate of LLM_MODEL_PREFS) {
+        if (names.has(candidate)) return candidate;
+      }
+    }
+  } catch {}
+  return LLM_MODEL_PREFS[1];
+}
+
+async function llmChat(model, system, user, timeoutMs = 90_000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${OLLAMA_LOCAL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        options: { temperature: 0.2 },
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content: user },
+        ],
+      }),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) throw new Error(`llm http ${resp.status}: ${(await resp.text()).slice(0, 160)}`);
+    const out = await resp.json();
+    return (out?.message?.content || "").trim();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Naive resource search across all notebooks (v1; the derived FTS index is
+// the eventual replacement — issue #63). Scores transcript segments and note
+// lines by keyword hits and returns the top excerpts with provenance.
+const STOPWORDS = new Set([
+  "the", "and", "for", "that", "this", "with", "what", "who", "when",
+  "where", "why", "how", "was", "were", "are", "you", "about", "from",
+  "into", "have", "has", "had", "not", "but", "our", "their", "there",
+  "then", "than", "them", "will", "would", "could", "should", "does",
+  "did", "being", "been", "which", "while", "your", "can", "tell", "explain",
+]);
+
+function keywords(text) {
+  return [...new Set(
+    (text.toLowerCase().match(/[a-z][a-z'-]{2,}/g) || [])
+      .filter((w) => !STOPWORDS.has(w)),
+  )].slice(0, 12);
+}
+
+function scoreText(text, words) {
+  const low = text.toLowerCase();
+  let score = 0;
+  for (const w of words) {
+    const hits = low.split(w).length - 1;
+    if (hits > 0) score += 1 + Math.log2(hits);
+  }
+  return score;
+}
+
+function searchResources(query, words, limit = 6) {
+  const results = [];
+  const notebooksDir = notebooksRoot();
+  let notebooks;
+  try {
+    notebooks = fs.readdirSync(notebooksDir);
+  } catch {
+    return results;
+  }
+  for (const nb of notebooks) {
+    const sessionsDir = path.join(notebooksDir, nb, "sessions");
+    let sessions;
+    try {
+      sessions = fs.readdirSync(sessionsDir);
+    } catch {
+      continue;
+    }
+    for (const sess of sessions) {
+      const dir = path.join(sessionsDir, sess);
+      // transcript segments
+      const transcriptPath = path.join(dir, "transcript.jsonl");
+      try {
+        const lines = fs.readFileSync(transcriptPath, "utf8").split("\n").filter(Boolean);
+        for (const line of lines) {
+          try {
+            const seg = JSON.parse(line);
+            const s = scoreText(seg.text || "", words);
+            if (s > 0) {
+              results.push({
+                source: `${nb}/${sess} @ ${Math.floor(seg.start || 0)}s`,
+                text: seg.text,
+                score: s,
+              });
+            }
+          } catch {}
+        }
+      } catch {}
+      // notes
+      const notesPath = path.join(dir, "notes.md");
+      try {
+        const notes = fs.readFileSync(notesPath, "utf8");
+        for (const para of notes.split(/\n\s*\n/)) {
+          const body = para.replace(/^---[\s\S]*?---/, "").trim();
+          if (!body) continue;
+          const s = scoreText(body, words);
+          if (s > 0) {
+            results.push({ source: `${nb}/${sess} notes`, text: body.slice(0, 400), score: s });
+          }
+        }
+      } catch {}
+    }
+  }
+  results.sort((a, b) => b.score - a.score);
+  return results.slice(0, limit);
+}
+
+function fmtT(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// Persist a margin entry to the session's margin.jsonl (SPEC v0.2).
+function appendMargin(sessionDir, entry) {
+  const record = { schemaVersion: 0, createdAt: new Date().toISOString(), ...entry };
+  try {
+    fs.appendFileSync(path.join(sessionDir, "margin.jsonl"), JSON.stringify(record) + "\n");
+  } catch {}
+  return record;
+}
+
 // ------------------------------------------------------------------- ipc
 
 ipcMain.handle("ollama_status", () => probeOllama());
@@ -579,6 +735,99 @@ ipcMain.handle("capture_stop", () => {
 ipcMain.handle("capture_elapsed", () => {
   if (!active) throw new Error("no active capture session");
   return active.sampleCount / (SAMPLE_RATE * CHANNELS);
+});
+
+// ---- margin column ----
+
+// AI margin comment during capture: linked to the tape time AND the note
+// block the user was typing. Only fired by user typing activity (renderer
+// debounces); the model may decline ((none)).
+ipcMain.handle("ai_margin_comment", async (_e, p) => {
+  const model = await resolveLlmModel();
+  const system =
+    "You are the margin of a steno pad. The user is listening to a live event " +
+    "and jotting notes. Write ONE brief margin comment that helps the user: " +
+    "fix a spelling or grammar error in the note, add a concrete fact or " +
+    "correction drawn from the transcript, connect the note to what was just " +
+    "said, or flag an action or followup. Keep it under 25 words, no preamble. " +
+    "Reply with exactly (none) only if the note is complete and accurate and " +
+    "you truly have nothing useful to add.";
+  const user =
+    `Tape time: ${fmtT(p.atSec || 0)}\n` +
+    `Recent transcript: ${JSON.stringify((p.transcriptWindow || "").slice(0, 1500))}\n` +
+    `User's note block: ${JSON.stringify((p.noteBlock || "").slice(0, 600))}`;
+  let answer;
+  try {
+    answer = (await llmChat(model, system, user)).trim();
+  } catch (err) {
+    mainWindow?.webContents.send("transcript:error", {
+      message: `Margin AI failed: ${err.message}`,
+    });
+    return null;
+  }
+  if (!answer || answer === "(none)") return null;
+  return appendMargin(p.sessionDir, {
+    kind: "comment",
+    author: "ai",
+    atSec: p.atSec ?? null,
+    noteContext: (p.noteBlock || "").slice(0, 300) || null,
+    model,
+    text: answer,
+  });
+});
+
+// Selection chat: user selected a passage (transcript or notes) and asks a
+// question; the answer may draw on material from other notebook sessions.
+ipcMain.handle("ai_selection_chat", async (_e, p) => {
+  const model = await resolveLlmModel();
+  const selection = (p.selection || "").slice(0, 1200);
+  const question = (p.question || "").slice(0, 800);
+  const context = (p.context || "").slice(0, 1200);
+  const words = [...new Set([...keywords(selection), ...keywords(question)])];
+  const resources = searchResources(question, words);
+  const system =
+    "You are the AI margin of a steno notebook. The user selected a passage " +
+    "and asks a question. Use the selected text, the surrounding context, and " +
+    "the resource excerpts. When you use a resource, name it like " +
+    "[Inbox/2026-11-03-1900]. 2-5 sentences. No preamble.";
+  const user =
+    `Selected passage: ${JSON.stringify(selection)}\n` +
+    `Surrounding context: ${JSON.stringify(context)}\n` +
+    (resources.length
+      ? `Resources from the user's other sessions:\n${resources
+          .map((r) => `- [${r.source}] ${JSON.stringify(r.text.slice(0, 400))}`)
+          .join("\n")}\n`
+      : "") +
+    `Question: ${JSON.stringify(question)}`;
+  let answer;
+  try {
+    answer = await llmChat(model, system, user);
+  } catch (err) {
+    mainWindow?.webContents.send("transcript:error", {
+      message: `Selection chat failed: ${err.message}`,
+    });
+    return null;
+  }
+  return appendMargin(p.sessionDir, {
+    kind: "chat",
+    author: "human->ai",
+    atSec: p.atSec ?? null,
+    selection,
+    question,
+    model,
+    text: answer || "(no answer)",
+  });
+});
+
+// Persist a human margin comment.
+ipcMain.handle("margin_add", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "comment",
+    author: "human",
+    atSec: p.atSec ?? null,
+    noteContext: (p.noteContext || "").slice(0, 300) || null,
+    text: String(p.text || "").slice(0, 2000),
+  });
 });
 
 // ---------------------------------------------------------------- window

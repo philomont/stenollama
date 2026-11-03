@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld("steno", {
   },
 
   on: (channel, listener) => {
-    if (!channel.startsWith("capture:")) {
+    if (!channel.startsWith("capture:") && !channel.startsWith("transcript:")) {
       throw new Error(`unallowed steno event: ${channel}`);
     }
     const wrapped = (_e, payload) => listener(payload);

@@ -21,6 +21,40 @@ const CHUNK_MS = 100;
 const LEVEL_EVENT_INTERVAL_MS = 300;
 const VITE_DEV_URL = process.env.VITE_DEV_URL || "http://localhost:1420";
 
+// ---- live transcription (gemma4 / qwen3-asr via local Ollama) ----
+// Fixed windows with an energy gate: only speech-containing windows are sent
+// to Ollama. Overlap gives the model continuity context. gemma4 requires
+// WAV/RIFF, 16kHz mono, <= ~60s per request (see issue #11 findings).
+const ASR_MODEL_ENV = process.env.STENO_ASR_MODEL || "";
+const ASR_MODEL_PREFS = ["gemma4:e4b", "frozenlab/qwen3-asr"];
+const ASR_WINDOW_SEC = 20;
+const ASR_MIN_SEC = 4; // don't send windows shorter than this (except at stop)
+const ASR_OVERLAP_SEC = 0.5;
+const ASR_SILENCE_DBFS = -55; // windows below this peak energy are skipped
+const ASR_TIMEOUT_MS = 120_000;
+const OLLAMA_LOCAL = process.env.STENO_OLLAMA_HOST || "http://127.0.0.1:11434";
+
+async function resolveAsrModel() {
+  if (ASR_MODEL_ENV) return ASR_MODEL_ENV; // explicit override wins
+  try {
+    const resp = await fetch(`${OLLAMA_LOCAL}/api/tags`);
+    if (resp.ok) {
+      const { models = [] } = await resp.json();
+      const names = new Set();
+      for (const m of models) {
+        names.add(m.name); // full: "frozenlab/qwen3-asr:latest"
+        names.add(m.name.split(":")[0]); // base: "frozenlab/qwen3-asr"
+      }
+      for (const candidate of ASR_MODEL_PREFS) {
+        if (names.has(candidate)) return candidate;
+      }
+    }
+  } catch {
+    /* daemon down; fall through to the default and let the request fail */
+  }
+  return ASR_MODEL_PREFS[0];
+}
+
 let mainWindow = null;
 let active = null; // active capture session
 
@@ -164,6 +198,12 @@ function finalizeSession(reason) {
   try {
     s.ffmpeg.kill("SIGKILL");
   } catch {}
+  try {
+    s.asrFlush?.();
+  } catch {}
+  try {
+    fs.closeSync(s.readFd);
+  } catch {}
 
   const duration = s.sampleCount / (SAMPLE_RATE * CHANNELS);
   try {
@@ -191,6 +231,7 @@ async function captureStart(notebook) {
   if (active) throw new Error("a capture session is already active");
 
   const monitor = await defaultSinkMonitor();
+  const asrModel = await resolveAsrModel();
   const { name, iso } = utcStamp();
   const sessionDir = path.join(notebooksRoot(), notebook, "sessions", name);
   fs.mkdirSync(sessionDir, { recursive: true });
@@ -203,7 +244,9 @@ async function captureStart(notebook) {
     `---\nschemaVersion: 0\nanchors: []\nhighlights: []\ntags: []\n---\n\n## Session ${name}\n`,
   );
 
-  const fd = fs.openSync(path.join(sessionDir, "audio.wav"), "w");
+  const wavPath = path.join(sessionDir, "audio.wav");
+  const fd = fs.openSync(wavPath, "w");
+  const readFd = fs.openSync(wavPath, "r");
   fs.writeSync(fd, wavHeader(0));
 
   let finished = false;
@@ -215,6 +258,13 @@ async function captureStart(notebook) {
     ffmpeg: null,
     sampleCount: 0,
     dataLen: 0,
+    // transcription engine state
+    asrModel,
+    readFd,
+    asrNextSample: 0, // first sample of the next window
+    asrSegmentNo: 0,
+    asrModelWarned: false,
+    chunkEnergy: [], // [{ startSample, endSample, rms }] for the energy gate
   };
 
   const ffmpeg = spawn(
@@ -262,6 +312,15 @@ async function captureStart(notebook) {
           n++;
         }
         const rms = Math.sqrt(sumSq / Math.max(1, n));
+        s.chunkEnergy.push({
+          startSample: s.sampleCount - Math.floor(chunk.length / 2),
+          endSample: s.sampleCount,
+          rms,
+        });
+        // keep only the current + previous window worth of energy records
+        if (s.chunkEnergy.length > (SAMPLE_RATE * ASR_WINDOW_SEC * 10) / CHUNK_MS + 50) {
+          s.chunkEnergy.splice(0, s.chunkEnergy.length - 200);
+        }
         mainWindow?.webContents.send("capture:level", {
           elapsed_sec: s.sampleCount / (SAMPLE_RATE * CHANNELS),
           rms_dbfs: dbfs(rms),
@@ -269,6 +328,9 @@ async function captureStart(notebook) {
       }
     }
   });
+
+  // Kick the transcription timer.
+  startAsrLoop(s);
 
   ffmpeg.stdout.on("end", () => {
     if (!finished) {
@@ -285,6 +347,142 @@ async function captureStart(notebook) {
   });
 
   return sessionDir;
+}
+
+// ----------------------------------------------------------------- asr
+
+// Extract [startSample, endSample) PCM from the growing WAV and wrap it in a
+// standalone WAV container (gemma4 needs RIFF).
+function extractWavSlice(s, startSample, endSample) {
+  const byteStart = 44 + startSample * 2;
+  const byteLen = (endSample - startSample) * 2;
+  const buf = Buffer.alloc(byteLen);
+  let total = 0;
+  while (total < byteLen) {
+    const n = fs.readSync(s.readFd, buf, total, byteLen - total, byteStart + total);
+    if (n === 0) break;
+    total += n;
+  }
+  return Buffer.concat([wavHeader(total), buf.subarray(0, total)]);
+}
+
+// Peak RMS over the window's energy records — the gate that avoids sending
+// silence to Ollama.
+function windowEnergyDbfs(s, startSample, endSample) {
+  let peak = 0;
+  for (const c of s.chunkEnergy) {
+    if (c.endSample <= startSample) continue;
+    if (c.startSample >= endSample) break;
+    if (c.rms > peak) peak = c.rms;
+  }
+  return dbfs(peak);
+}
+
+async function transcribeSlice(s, startSample, endSample) {
+  const model = s.asrModel;
+  const wav = extractWavSlice(s, startSample, endSample);
+  const body = {
+    model,
+    stream: false,
+    options: { temperature: 0 },
+    messages: [
+      {
+        role: "user",
+        content:
+          "Transcribe this audio verbatim. Output only the spoken words, " +
+            "no commentary, no timestamps.",
+        images: [wav.toString("base64")],
+      },
+    ],
+  };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ASR_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${OLLAMA_LOCAL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      const detail = await resp.text();
+      if (!s.asrModelWarned) {
+        s.asrModelWarned = true;
+        let guidance;
+        if (resp.status === 404) {
+          guidance =
+            `Model ${model} not found on the local Ollama daemon. ` +
+            `Run: ollama pull ${model} — or set STENO_ASR_MODEL.`;
+        } else {
+          guidance =
+            `Transcription failed (${resp.status}): ${detail.slice(0, 160)} ` +
+            `If the runner cannot load the model, update Ollama: ` +
+            `curl -fsSL https://ollama.com/install.sh | sh`;
+        }
+        mainWindow?.webContents.send("transcript:error", { message: guidance });
+      }
+      console.error(`[stenollama] asr http ${resp.status}: ${detail.slice(0, 200)}`);
+      return;
+    }
+    const out = await resp.json();
+    const text = (out?.message?.content || "").trim();
+    if (!text) return;
+
+    const seg = {
+      schemaVersion: 0,
+      id: `seg-${String(++s.asrSegmentNo).padStart(6, "0")}`,
+      start: startSample / SAMPLE_RATE,
+      end: endSample / SAMPLE_RATE,
+      text,
+      confidence: null,
+    };
+    try {
+      fs.appendFileSync(path.join(s.sessionDir, "transcript.jsonl"), JSON.stringify(seg) + "\n");
+    } catch {}
+    mainWindow?.webContents.send("transcript:segment", seg);
+  } catch (e) {
+    if (e.name !== "AbortError") console.error("[stenollama] asr failed:", e.message);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Window loop: every 2s tick, send a slice once a full ASR window has
+// accumulated and it contains speech. Windows serialize (one at a time).
+function startAsrLoop(s) {
+  const overlap = Math.floor(ASR_OVERLAP_SEC * SAMPLE_RATE);
+  const minSamples = ASR_MIN_SEC * SAMPLE_RATE;
+
+  const timer = setInterval(async () => {
+    if (!active || active.sessionDir !== s.sessionDir) {
+      clearInterval(timer);
+      return;
+    }
+    const end = s.sampleCount;
+    if (end - s.asrNextSample < ASR_WINDOW_SEC * SAMPLE_RATE) return;
+
+    const start = s.asrNextSample;
+    s.asrNextSample = Math.max(start + minSamples, end - overlap);
+
+    if (windowEnergyDbfs(s, start, end) < ASR_SILENCE_DBFS) return;
+    if (s.asrBusy) return;
+    s.asrBusy = true;
+    try {
+      await transcribeSlice(s, start, end);
+    } finally {
+      s.asrBusy = false;
+    }
+  }, 2000);
+
+  // On stop, flush any remaining partial window >= ASR_MIN_SEC.
+  s.asrFlush = () => {
+    clearInterval(timer);
+    const start = s.asrNextSample;
+    const end = s.sampleCount;
+    if (end - start >= minSamples && windowEnergyDbfs(s, start, end) >= ASR_SILENCE_DBFS) {
+      transcribeSlice(s, start, end).catch(() => {});
+    }
+  };
 }
 
 // ------------------------------------------------------------------- ipc

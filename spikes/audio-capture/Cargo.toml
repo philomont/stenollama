@@ -1,0 +1,8 @@
+[package]
+name = "audio-capture-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Intentionally zero dependencies: this spike must compile and run on a bare
+# Linux box, exercising only system tools (wpctl, pw-cli, ffmpeg) and std.

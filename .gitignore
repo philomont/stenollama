@@ -22,3 +22,5 @@ notebooks/
 *.swp
 .idea/
 .vscode/
+# Rust (spikes)
+target/

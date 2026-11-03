@@ -353,7 +353,7 @@ pub fn capture_start(
         );
     });
 
-    *state = Some(ActiveSession {
+    state.session = Some(ActiveSession {
         session_dir: session_dir.to_string_lossy().to_string(),
         monitor,
         child,
@@ -369,7 +369,7 @@ pub fn capture_start(
 #[tauri::command]
 pub fn capture_stop(state: State<'_, Mutex<CaptureState>>) -> Result<String, String> {
     let mut state = state.lock().unwrap();
-    let active = state.session.take().ok_or("no active capture session")?;
+    let mut active = state.session.take().ok_or("no active capture session")?;
     active.stop.store(true, Ordering::Relaxed);
     let _ = active.child.kill();
     let dir = active.session_dir.clone();

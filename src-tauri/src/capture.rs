@@ -384,9 +384,6 @@ pub fn capture_stop(state: State<'_, Mutex<CaptureState>>) -> Result<String, Str
 #[tauri::command]
 pub fn capture_elapsed(state: State<'_, Mutex<CaptureState>>) -> Result<f64, String> {
     let state = state.lock().unwrap();
-    let s = state
-        .session
-        .as_ref()
-        .ok_or("no active capture session")?;
+    let s = state.session.as_ref().ok_or("no active capture session")?;
     Ok(s.sample_count.load(Ordering::Relaxed) as f64 / (SAMPLE_RATE * CHANNELS as u32) as f64)
 }

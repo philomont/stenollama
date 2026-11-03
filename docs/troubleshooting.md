@@ -28,11 +28,17 @@ Evidence gathered:
 - Upstream fixed the deadlock in glycin 2.2.0; Ubuntu resolute ships 2.1.5
   (LP #2122289 switched gdk-pixbuf to wrap glycin; related: LP #2171362).
 
-**Workarounds (require sudo or newer packages):**
-1. Best: run `scripts/fix-glycin-deadlock.sh` from this repo — it installs
-   Debian's glycin 2.2.3 (soname-compatible, checksum-pinned, with rollback)
-   and contains the deadlock fix plus `GLYCIN_DISABLE_SANDBOX` support.
-2. Or wait for the Ubuntu SRU (track LP #2171362).
+**Workarounds:**
+1. **The app ships an Electron (Chromium) shell for Linux** — see `electron/`
+   and `src/api.ts`. Chromium is unaffected by the WebKitGTK breakage, and
+   the frontend is shell-agnostic; the Rust/Tauri backend remains the
+   Windows/macOS path (WebView2 / WKWebView don't use WebKitGTK).
+2. `scripts/fix-glycin-deadlock.sh` installs Debian's glycin 2.2.3
+   (checksum-pinned, with rollback). Worth keeping even with Electron —
+   it fixes the underlying gdk-pixbuf deadlock for every affected app,
+   though on at least one resolute machine the WebKitGTK stall persisted
+   even with glycin 2.2.3 (a plain Python WebKitGTK window still never
+   loads), which is why the app moved to Chromium on Linux.
 3. NOT recommended: `WEBKIT_DISABLE_DMABUF_RENDERER=1` — on WebKitGTK 2.52 +
    Mesa 26 this aborts the WebProcess instead (cc-switch#6514).
 

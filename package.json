@@ -8,7 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "icon": "node scripts/make-icon.mjs icon-src.png && tauri icon icon-src.png"
+    "icon": "node scripts/make-icon.mjs icon-src.png && tauri icon icon-src.png",
+    "electron:dev": "electron . --no-sandbox",
+    "dev:linux": "npm run dev & sleep 3 && electron . --no-sandbox"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -20,7 +22,9 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^45.2.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
-  }
+  },
+  "main": "electron/main.cjs"
 }

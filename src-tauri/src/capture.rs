@@ -217,7 +217,10 @@ pub fn capture_start(
     let monitor = default_sink_monitor()?;
 
     let (stamp, started_at) = session_stamp();
-    let session_dir = notebooks_root().join(notebook).join("sessions").join(stamp);
+    let session_dir = notebooks_root()
+        .join(notebook)
+        .join("sessions")
+        .join(&stamp);
     fs::create_dir_all(&session_dir).map_err(|e| format!("cannot create session dir: {e}"))?;
 
     let mut child = Command::new("ffmpeg")
@@ -265,6 +268,7 @@ pub fn capture_start(
     let stop = Arc::new(AtomicBool::new(false));
     let sample_count = Arc::new(AtomicU64::new(0));
     let sc_reader = Arc::clone(&sample_count);
+    let stop_thread = Arc::clone(&stop);
 
     let session_dir_s = session_dir.to_string_lossy().to_string();
     let monitor_clone = monitor.clone();
@@ -320,7 +324,7 @@ pub fn capture_start(
                 last_level = Instant::now();
             }
 
-            if stop.load(Ordering::Relaxed) {
+            if stop_thread.load(Ordering::Relaxed) {
                 reason = "stopped";
                 break;
             }

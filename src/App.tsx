@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend } from "./api";
 
 interface OllamaStatus {
   local_online: boolean;
@@ -33,29 +32,13 @@ function fmtClock(sec: number): string {
   return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
 }
 
-/** In the Tauri webview, invoke() reaches the Rust backend. In a plain
- *  browser (dev preview) there is no backend, so we fall back to a direct
- *  fetch against the local daemon — which also covers CORS-friendly setups. */
+/** Resolve once per session via the shell adapter (electron | tauri | browser). */
 async function probeOllama(): Promise<OllamaStatus> {
   try {
-    return await invoke<OllamaStatus>("ollama_status");
+    const b = await backend();
+    return await b.invoke<OllamaStatus>("ollama_status");
   } catch {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1500);
-      const resp = await fetch("http://127.0.0.1:11434/api/version", {
-        signal: ctrl.signal,
-      });
-      clearTimeout(t);
-      const body = await resp.json();
-      return {
-        local_online: true,
-        local_version: body.version ?? null,
-        cloud_online: false,
-      };
-    } catch {
-      return { local_online: false, local_version: null, cloud_online: false };
-    }
+    return { local_online: false, local_version: null, cloud_online: false };
   }
 }
 
@@ -77,20 +60,21 @@ export default function App() {
   useEffect(() => {
     probeOllama().then(setOllama);
 
-    const unsubs: Promise<UnlistenFn>[] = [
-      listen<LevelEvent>("capture:level", (e) => {
-        setElapsed(e.payload.elapsed_sec);
-        setLevel(e.payload.rms_dbfs);
-      }),
-      listen<StoppedEvent>("capture:stopped", (e) => {
+    backend().then((b) => {
+      const un1 = b.listen<LevelEvent>("capture:level", (e) => {
+        setElapsed(e.elapsed_sec);
+        setLevel(e.rms_dbfs);
+      });
+      const un2 = b.listen<StoppedEvent>("capture:stopped", (e) => {
         setRecording(false);
-        setElapsed(e.payload.duration_sec);
-        setLastSession(e.payload.session_dir);
-      }),
-    ];
-    return () => {
-      unsubs.forEach((u) => u.then((unlisten) => unlisten()));
-    };
+        setElapsed(e.duration_sec);
+        setLastSession(e.session_dir);
+      });
+      return () => {
+        un1.then((un) => un());
+        un2.then((un) => un());
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -100,13 +84,14 @@ export default function App() {
   async function toggleRecord() {
     setError(null);
     try {
+      const b = await backend();
       if (!recording) {
-        await invoke("capture_start", { notebook: "Inbox" });
+        await b.invoke("capture_start", { notebook: "Inbox" });
         setRecording(true);
         setElapsed(0);
         setLastSession(null);
       } else {
-        await invoke("capture_stop");
+        await b.invoke("capture_stop");
       }
     } catch (e) {
       setError(String(e));

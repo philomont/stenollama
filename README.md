@@ -8,21 +8,41 @@ via Ollama Cloud models (GLM 5.3 / GLM 5.3 Flash).
 ## Layout
 
 - `docs/adr/` — architecture decision records
-- `src/` — React + TypeScript frontend (stenopad UI)
-- `src-tauri/` — Rust backend (audio capture, storage, Ollama client)
+- `src/` — React + TypeScript frontend (stenopad UI, shell-agnostic)
+- `electron/` — Electron shell (Linux) with the capture/Ollama backend
+- `src-tauri/` — Tauri shell + Rust backend (Windows/macOS; broken on some
+  Ubuntu 26.04 systems — see `docs/troubleshooting.md`)
 - `spikes/` — throwaway feasibility experiments
 - `.github/workflows/` — CI
 
-## Development (Linux)
+## Development
+
+**Linux** (uses the Electron/Chromium shell):
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-                 libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+npm install
+npm run dev:linux        # vite + electron
+```
+
+`--no-sandbox` is a dev convenience; for a hardened setup run once:
+
+```bash
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+```
+
+then drop `--no-sandbox` from the scripts.
+
+**Windows / macOS** (Tauri shell — WebView2 / WKWebView, unaffected by the
+WebKitGTK issue):
+
+```bash
 npm install
 npm run tauri dev
 ```
 
-Ollama must be running locally (`ollama serve`) for live features.
+Ollama should be running locally for live features; set `OLLAMA_API_KEY` in
+your environment to also enable Ollama Cloud (GLM models).
 
 ## Status
 

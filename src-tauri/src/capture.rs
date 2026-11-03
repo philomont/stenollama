@@ -33,7 +33,6 @@ pub struct CaptureState {
 
 pub struct ActiveSession {
     pub session_dir: String,
-    pub monitor: String,
     pub child: Child,
     pub stop: Arc<AtomicBool>,
     pub sample_count: Arc<AtomicU64>,
@@ -198,7 +197,7 @@ fn dbfs(rms: f64) -> f64 {
     if rms <= 0.0 {
         -90.0
     } else {
-        ((20.0 * (rms / 32_768.0).log10()) as f64).max(-90.0)
+        (20.0 * (rms / 32_768.0).log10()).max(-90.0)
     }
 }
 
@@ -303,15 +302,16 @@ pub fn capture_start(
             sc_reader.fetch_add((filled / 2) as u64, Ordering::Relaxed);
 
             if last_level.elapsed() >= Duration::from_millis(LEVEL_EVENT_INTERVAL_MS) {
-                let sum_sq: f64 = buf[..filled]
-                    .chunks_exact(2)
-                    .map(|c| {
-                        let s = i16::from_le_bytes([c[0], c[1]]) as f64;
-                        s * s
-                    })
-                    .sum();
-                let n = (filled / 2) as f64;
-                let rms = (sum_sq / n).sqrt();
+                let mut sum_sq: f64 = 0.0;
+                let mut n: usize = 0;
+                let mut i = 0;
+                while i + 1 < filled {
+                    let s = i16::from_le_bytes([buf[i], buf[i + 1]]) as f64;
+                    sum_sq += s * s;
+                    n += 1;
+                    i += 2;
+                }
+                let rms = (sum_sq / n.max(1) as f64).sqrt();
                 let elapsed = sc_reader.load(Ordering::Relaxed) as f64
                     / (SAMPLE_RATE * CHANNELS as u32) as f64;
                 let _ = app.emit(
@@ -359,7 +359,6 @@ pub fn capture_start(
 
     state.session = Some(ActiveSession {
         session_dir: session_dir.to_string_lossy().to_string(),
-        monitor,
         child,
         stop,
         sample_count,

@@ -1,5 +1,10 @@
 use serde::Serialize;
+use std::sync::Mutex;
 use std::time::Duration;
+
+mod capture;
+
+use capture::CaptureState;
 
 /// Health probe for the local Ollama daemon (`#50`, first slice).
 #[derive(Serialize)]
@@ -43,7 +48,13 @@ async fn ollama_status() -> OllamaStatus {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![ollama_status])
+        .manage(Mutex::new(CaptureState::new()))
+        .invoke_handler(tauri::generate_handler![
+            ollama_status,
+            capture::capture_start,
+            capture::capture_stop,
+            capture::capture_elapsed
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

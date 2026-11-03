@@ -9,6 +9,7 @@
   --accent-soft: #7c6cf033;
   --ok: #3ecf8e;
   --down: #e5484d;
+  --ai: #3f8cff;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
@@ -67,6 +68,14 @@ body {
   cursor: pointer;
 }
 .notebooks li.active { background: var(--accent-soft); color: var(--text); }
+
+.last-session {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---------- center: session ---------- */
 .center {
@@ -129,14 +138,6 @@ body {
   opacity: 0.7;
 }
 
-.last-session {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .error-banner {
   position: fixed;
   bottom: 16px;
@@ -179,27 +180,70 @@ body {
 }
 .notes textarea:focus { outline: 1px solid var(--accent); }
 
-/* ---------- right: distillation ---------- */
-.distill {
+/* ---------- right: margin column ---------- */
+.margin-col {
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: auto;
+  min-height: 0;
 }
 
-.distill-actions { display: flex; flex-direction: column; gap: 8px; }
-.distill-actions button {
+.margin-feed {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.margin-entry {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.margin-entry.ai { border-color: var(--ai); }
+
+.margin-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.author {
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 6px;
+}
+.author.human { background: var(--accent-soft); color: var(--text); }
+.author.ai { background: #3f8cff22; color: var(--ai); }
+
+.margin-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.margin-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.margin-input input {
+  width: 100%;
   background: var(--bg-raised);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px 12px;
+  font: inherit;
   font-size: 13px;
-  cursor: not-allowed;
-  opacity: 0.5;
 }
-
-.distill-stream { flex: 1; }
+.margin-input input:focus { outline: 1px solid var(--accent); }

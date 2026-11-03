@@ -25,6 +25,11 @@ interface TranscriptSegment {
   text: string;
 }
 
+interface EngineInfo {
+  engine: string;
+  label: string;
+}
+
 interface MarginComment {
   id: number;
   author: "human" | "ai";
@@ -58,6 +63,7 @@ export default function App() {
   const [noteText, setNoteText] = useState("");
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [asrError, setAsrError] = useState<string | null>(null);
+  const [engine, setEngine] = useState<EngineInfo | null>(null);
 
   // Margin.
   const [margin, setMargin] = useState<MarginComment[]>([]);
@@ -71,30 +77,44 @@ export default function App() {
       .then((b) => b.invoke<OllamaStatus>("ollama_status"))
       .then(setOllama)
       .catch(() => setOllama({ local_online: false, local_version: null, cloud_online: false }));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubs: Array<() => void> = [];
 
     backend().then((b) => {
-      const un1 = b.listen<LevelEvent>("capture:level", (e) => {
-        setElapsed(e.elapsed_sec);
-        setLevel(e.rms_dbfs);
+      if (cancelled) return;
+      const subs = [
+        b.listen<LevelEvent>("capture:level", (e) => {
+          setElapsed(e.elapsed_sec);
+          setLevel(e.rms_dbfs);
+        }),
+        b.listen<StoppedEvent>("capture:stopped", (e) => {
+          setRecording(false);
+          setElapsed(e.duration_sec);
+          setLastSession(e.session_dir);
+        }),
+        b.listen<TranscriptSegment>("transcript:segment", (seg) => {
+          setSegments((prev) => [...prev, seg]);
+        }),
+        b.listen<{ message: string }>("transcript:error", (e) => {
+          setAsrError(e.message);
+        }),
+        b.listen<EngineInfo>("transcript:engine", (info) => {
+          setEngine(info);
+        }),
+      ];
+      Promise.all(subs).then((fns) => {
+        if (cancelled) fns.forEach((un) => un());
+        else unsubs = fns;
       });
-      const un2 = b.listen<StoppedEvent>("capture:stopped", (e) => {
-        setRecording(false);
-        setElapsed(e.duration_sec);
-        setLastSession(e.session_dir);
-      });
-      const un3 = b.listen<TranscriptSegment>("transcript:segment", (seg) => {
-        setSegments((prev) => [...prev, seg]);
-      });
-      const un4 = b.listen<{ message: string }>("transcript:error", (e) => {
-        setAsrError(e.message);
-      });
-      return () => {
-        un1.then((un) => un());
-        un2.then((un) => un());
-        un3.then((un) => un());
-        un4.then((un) => un());
-      };
     });
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((un) => un());
+    };
   }, []);
 
   useEffect(() => {
@@ -177,6 +197,11 @@ export default function App() {
           {lastSession && (
             <p className="last-session" title={lastSession}>
               last: {lastSession.split("/").pop()}
+            </p>
+          )}
+          {engine && (
+            <p className="engine-line">
+              asr: {engine.label}
             </p>
           )}
         </div>

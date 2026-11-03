@@ -21,12 +21,23 @@ const CHUNK_MS = 100;
 const LEVEL_EVENT_INTERVAL_MS = 300;
 const VITE_DEV_URL = process.env.VITE_DEV_URL || "http://localhost:1420";
 
-// ---- live transcription (gemma4 / qwen3-asr via local Ollama) ----
-// Fixed windows with an energy gate: only speech-containing windows are sent
-// to Ollama. Overlap gives the model continuity context. gemma4 requires
-// WAV/RIFF, 16kHz mono, <= ~60s per request (see issue #11 findings).
+// ---- live transcription (whisper.cpp local | gemma4/qwen3-asr via Ollama) ----
+// Fixed windows with an energy gate: only speech-containing windows are sent.
+// Engine resolution order:
+//   1. whisper.cpp sidecar at ~/.stenollama/tools/whisper-cli with a ggml
+//      model in ~/.stenollama/models (preferred: fully local, no Ollama
+//      version dependency; STENO_WHISPER_MODEL overrides the model choice)
+//   2. Ollama audio model (STENO_ASR_MODEL override, else first of
+//      gemma4:e4b / frozenlab/qwen3-asr present locally)
 const ASR_MODEL_ENV = process.env.STENO_ASR_MODEL || "";
 const ASR_MODEL_PREFS = ["gemma4:e4b", "frozenlab/qwen3-asr"];
+const STENO_HOME = path.join(os.homedir(), ".stenollama");
+const WHISPER_BIN = process.env.STENO_WHISPER_BIN || path.join(STENO_HOME, "tools", "whisper-cli");
+const WHISPER_MODEL_PREFS = [
+  process.env.STENO_WHISPER_MODEL,
+  "ggml-small.en.bin",
+  "ggml-base.en.bin",
+].filter(Boolean);
 const ASR_WINDOW_SEC = 20;
 const ASR_MIN_SEC = 4; // don't send windows shorter than this (except at stop)
 const ASR_OVERLAP_SEC = 0.5;
@@ -34,8 +45,23 @@ const ASR_SILENCE_DBFS = -55; // windows below this peak energy are skipped
 const ASR_TIMEOUT_MS = 120_000;
 const OLLAMA_LOCAL = process.env.STENO_OLLAMA_HOST || "http://127.0.0.1:11434";
 
-async function resolveAsrModel() {
-  if (ASR_MODEL_ENV) return ASR_MODEL_ENV; // explicit override wins
+function whisperModelPath() {
+  for (const m of WHISPER_MODEL_PREFS) {
+    const p = path.isAbsolute(m) ? m : path.join(STENO_HOME, "models", m);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+async function resolveAsrEngine() {
+  // Explicit Ollama model selection skips the whisper path.
+  if (ASR_MODEL_ENV) return { engine: "ollama", model: ASR_MODEL_ENV };
+  if (fs.existsSync(WHISPER_BIN)) {
+    const model = whisperModelPath();
+    if (model) {
+      return { engine: "whisper", model, label: `whisper ${path.basename(model)}` };
+    }
+  }
   try {
     const resp = await fetch(`${OLLAMA_LOCAL}/api/tags`);
     if (resp.ok) {
@@ -46,13 +72,13 @@ async function resolveAsrModel() {
         names.add(m.name.split(":")[0]); // base: "frozenlab/qwen3-asr"
       }
       for (const candidate of ASR_MODEL_PREFS) {
-        if (names.has(candidate)) return candidate;
+        if (names.has(candidate)) return { engine: "ollama", model: candidate };
       }
     }
   } catch {
-    /* daemon down; fall through to the default and let the request fail */
+    /* daemon down */
   }
-  return ASR_MODEL_PREFS[0];
+  return { engine: "ollama", model: ASR_MODEL_PREFS[0] };
 }
 
 let mainWindow = null;
@@ -231,7 +257,7 @@ async function captureStart(notebook) {
   if (active) throw new Error("a capture session is already active");
 
   const monitor = await defaultSinkMonitor();
-  const asrModel = await resolveAsrModel();
+  const engine = await resolveAsrEngine();
   const { name, iso } = utcStamp();
   const sessionDir = path.join(notebooksRoot(), notebook, "sessions", name);
   fs.mkdirSync(sessionDir, { recursive: true });
@@ -259,13 +285,18 @@ async function captureStart(notebook) {
     sampleCount: 0,
     dataLen: 0,
     // transcription engine state
-    asrModel,
+    asrEngine: engine.engine,
+    asrModel: engine.model,
     readFd,
     asrNextSample: 0, // first sample of the next window
     asrSegmentNo: 0,
     asrModelWarned: false,
     chunkEnergy: [], // [{ startSample, endSample, rms }] for the energy gate
   };
+  mainWindow?.webContents.send("transcript:engine", {
+    engine: engine.engine,
+    label: engine.label || engine.model,
+  });
 
   const ffmpeg = spawn(
     "ffmpeg",
@@ -378,54 +409,97 @@ function windowEnergyDbfs(s, startSample, endSample) {
   return dbfs(peak);
 }
 
-async function transcribeSlice(s, startSample, endSample) {
-  const model = s.asrModel;
-  const wav = extractWavSlice(s, startSample, endSample);
-  const body = {
-    model,
-    stream: false,
-    options: { temperature: 0 },
-    messages: [
-      {
-        role: "user",
-        content:
-          "Transcribe this audio verbatim. Output only the spoken words, " +
-            "no commentary, no timestamps.",
-        images: [wav.toString("base64")],
-      },
-    ],
-  };
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ASR_TIMEOUT_MS);
-  try {
-    const resp = await fetch(`${OLLAMA_LOCAL}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
+// Transcribe via the whisper.cpp sidecar. Returns the text or throws.
+function whisperTranscribe(s, wav) {
+  return new Promise((resolve, reject) => {
+    const tmp = path.join(s.sessionDir, `.asr-${Date.now()}.wav`);
+    fs.writeFileSync(tmp, wav);
+    const args = [
+      "-m", s.asrModel,
+      "-f", tmp,
+      "-nt", "-np", // no timestamps, no progress prints
+      "-l", process.env.STENO_ASR_LANG || "auto",
+    ];
+    const child = spawn(WHISPER_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("whisper timeout"));
+    }, ASR_TIMEOUT_MS);
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
     });
-    if (!resp.ok) {
-      const detail = await resp.text();
-      if (!s.asrModelWarned) {
-        s.asrModelWarned = true;
-        let guidance;
-        if (resp.status === 404) {
-          guidance =
-            `Model ${model} not found on the local Ollama daemon. ` +
-            `Run: ollama pull ${model} — or set STENO_ASR_MODEL.`;
-        } else {
-          guidance =
-            `Transcription failed (${resp.status}): ${detail.slice(0, 160)} ` +
-            `If the runner cannot load the model, update Ollama: ` +
-            `curl -fsSL https://ollama.com/install.sh | sh`;
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      try {
+        fs.unlinkSync(tmp);
+      } catch {}
+      if (code === 0) resolve(out.trim());
+      else reject(new Error(`whisper exited ${code}: ${err.slice(0, 160)}`));
+    });
+  });
+}
+
+async function transcribeSlice(s, startSample, endSample) {
+  const wav = extractWavSlice(s, startSample, endSample);
+  try {
+    let text;
+    if (s.asrEngine === "whisper") {
+      text = (await whisperTranscribe(s, wav)).trim();
+    } else {
+      const body = {
+        model: s.asrModel,
+        stream: false,
+        options: { temperature: 0 },
+        messages: [
+          {
+            role: "user",
+            content:
+              "Transcribe this audio verbatim. Output only the spoken words, " +
+                "no commentary, no timestamps.",
+            images: [wav.toString("base64")],
+          },
+        ],
+      };
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), ASR_TIMEOUT_MS);
+      try {
+        const resp = await fetch(`${OLLAMA_LOCAL}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        });
+        if (!resp.ok) {
+          const detail = await resp.text();
+          if (!s.asrModelWarned) {
+            s.asrModelWarned = true;
+            let guidance;
+            if (resp.status === 404) {
+              guidance =
+                `Model ${s.asrModel} not found on the local Ollama daemon. ` +
+                `Run: ollama pull ${s.asrModel} — or set STENO_ASR_MODEL.`;
+            } else {
+              guidance =
+                `Transcription failed (${resp.status}): ${detail.slice(0, 160)} ` +
+                `If the runner cannot load the model, update Ollama: ` +
+                `curl -fsSL https://ollama.com/install.sh | sh`;
+            }
+            mainWindow?.webContents.send("transcript:error", { message: guidance });
+          }
+          console.error(`[stenollama] asr http ${resp.status}: ${detail.slice(0, 200)}`);
+          return;
         }
-        mainWindow?.webContents.send("transcript:error", { message: guidance });
+        const out = await resp.json();
+        text = (out?.message?.content || "").trim();
+      } finally {
+        clearTimeout(t);
       }
-      console.error(`[stenollama] asr http ${resp.status}: ${detail.slice(0, 200)}`);
-      return;
     }
-    const out = await resp.json();
-    const text = (out?.message?.content || "").trim();
     if (!text) return;
 
     const seg = {
@@ -441,9 +515,13 @@ async function transcribeSlice(s, startSample, endSample) {
     } catch {}
     mainWindow?.webContents.send("transcript:segment", seg);
   } catch (e) {
-    if (e.name !== "AbortError") console.error("[stenollama] asr failed:", e.message);
-  } finally {
-    clearTimeout(t);
+    if (!s.asrModelWarned) {
+      s.asrModelWarned = true;
+      mainWindow?.webContents.send("transcript:error", {
+        message: `Transcription engine failed: ${e.message}`,
+      });
+    }
+    console.error("[stenollama] asr failed:", e.message);
   }
 }
 

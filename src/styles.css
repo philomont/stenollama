@@ -384,3 +384,12 @@ body { background: var(--desk); color: var(--ink); }
   max-width: 70%;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
+.engine-line {
+  margin: 0;
+  font-size: 11px;
+  color: #8a7444;
+  font-family: "Courier New", ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

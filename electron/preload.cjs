@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("steno", {
       case "ai_margin_comment":
       case "ai_selection_chat":
       case "margin_add":
+      case "note_add":
         return ipcRenderer.invoke(channel, payload);
       default:
         return Promise.reject(new Error(`unknown steno channel: ${channel}`));

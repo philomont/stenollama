@@ -96,6 +96,22 @@ Some prose. Timestamps never appear inline; anchoring is in front-matter.
 {"schemaVersion":0,"id":"hl-000001","noteId":"note-000001","segments":["seg-000123","seg-000124"],"color":"accent","createdAt":"..."}
 ```
 
+### `notes.jsonl`
+
+One user note block per line — notes committed with Enter, injected into the
+stream at the point the user started typing relative to the recording.
+
+```json
+{"schemaVersion":0,"createdAt":"...","kind":"note","startSec":142.1,"endSec":149.8,"text":"...","selectionRef":null}
+```
+
+- `startSec` is the tape position where typing began (`null` when written
+  outside a capture — those render at the end of the stream).
+- `selectionRef` is present when the note was made *about* a selected passage
+  (from the selection box's "Add note" action).
+- The `notes.md` stub remains as the human-readable/export target; the
+  sidecar carries the anchors and feeds the stream UI.
+
 ### `margin.jsonl`
 
 One entry per line — the margin column: human/AI comments loosely linked to

@@ -710,11 +710,10 @@ function fmtT(sec) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-// Persist a margin entry to the session's margin.jsonl (SPEC v0.2).
-function appendMargin(sessionDir, entry) {
+function appendMargin(sessionDir, entry, file = "margin.jsonl") {
   const record = { schemaVersion: 0, createdAt: new Date().toISOString(), ...entry };
   try {
-    fs.appendFileSync(path.join(sessionDir, "margin.jsonl"), JSON.stringify(record) + "\n");
+    if (sessionDir) fs.appendFileSync(path.join(sessionDir, file), JSON.stringify(record) + "\n");
   } catch {}
   return record;
 }
@@ -817,6 +816,18 @@ ipcMain.handle("ai_selection_chat", async (_e, p) => {
     model,
     text: answer || "(no answer)",
   });
+});
+
+// Persist a user note block to the session's notes.jsonl (SPEC v0.3).
+ipcMain.handle("note_add", (_e, p) => {
+  const start = typeof p.startSec === "number" ? p.startSec : null;
+  return appendMargin(p.sessionDir, {
+    kind: "note",
+    startSec: start,
+    endSec: typeof p.endSec === "number" ? p.endSec : null,
+    text: String(p.text || "").slice(0, 4000),
+    selectionRef: p.selectionRef ? String(p.selectionRef).slice(0, 1500) : null,
+  }, "notes.jsonl");
 });
 
 // Persist a human margin comment.

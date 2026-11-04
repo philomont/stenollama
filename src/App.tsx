@@ -30,8 +30,16 @@ interface EngineInfo {
   label: string;
 }
 
-// A margin entry: a human/AI comment anchored to time + note block, or a
-// selection-anchored chat thread.
+// A user note block: committed with Enter, injected into the stream at the
+// point the user started typing relative to the recording.
+interface NoteBlock {
+  id?: string;
+  startSec: number | null;
+  endSec?: number | null;
+  text: string;
+  selectionRef?: string | null;
+}
+
 interface MarginEntry {
   id?: string;
   createdAt?: string;
@@ -72,8 +80,11 @@ export default function App() {
   const [lastSession, setLastSession] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // The pad.
-  const [noteText, setNoteText] = useState("");
+  // The pad: one time-ordered stream of transcript segments + note blocks.
+  const [noteBlocks, setNoteBlocks] = useState<NoteBlock[]>([]);
+  const [composeDraft, setComposeDraft] = useState("");
+  const composeStartRef = useRef<number | null>(null);
+  const noteBlocksRef = useRef<NoteBlock[]>([]);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [asrError, setAsrError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
@@ -94,7 +105,7 @@ export default function App() {
   const aiPending = useRef(false);
   const lastAiAt = useRef(0);
   const segmentsRef = useRef<TranscriptSegment[]>([]);
-  const transcriptRef = useRef<HTMLDivElement>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const recordingRef = useRef(false);
   const sessionDirRef = useRef<string | null>(null);
@@ -111,8 +122,12 @@ export default function App() {
     elapsedRef.current = elapsed;
   }, [elapsed]);
   useEffect(() => {
-    notesRef.current = noteText;
-  }, [noteText]);
+    notesRef.current = composeDraft;
+  }, [composeDraft]);
+
+  useEffect(() => {
+    noteBlocksRef.current = noteBlocks;
+  }, [noteBlocks]);
 
   useEffect(() => {
     backend()
@@ -163,7 +178,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
+    streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
   }, [segments]);
 
   useEffect(() => {
@@ -184,7 +199,7 @@ export default function App() {
         return;
       }
       const atSec = elapsedRef.current;
-      const noteBlock = lastNoteBlock(notesRef.current);
+      const noteBlock = composeDraft.trim() || lastNoteBlock(notesRef.current);
       const transcriptWindow = transcriptWindowText(segmentsRef.current, atSec);
       const sessionDir = sessionDirRef.current;
       const typed = charsSinceAi.current;
@@ -215,13 +230,29 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
-  // ---- selection chat ----
-  function selectionContext(origin: "transcript" | "notes"): string {
-    if (origin === "notes") return notesRef.current.slice(-1200);
-    return segmentsRef.current
-      .slice(-8)
-      .map((s) => s.text)
-      .join(" ");
+  // ---- selection: context around the selection + its tape anchor ----
+  function selectionContext(origin: "transcript" | "notes", selection: string): { context: string; atSec: number | null } {
+    const segs = segmentsRef.current;
+    const probe = selection.slice(0, 40);
+    const idx = segs.findIndex((s) => s.text.includes(probe) || probe.includes(s.text.slice(0, 40)));
+    if (origin === "transcript") {
+      if (idx >= 0) {
+        const around = segs
+          .slice(Math.max(0, idx - 3), idx + 4)
+          .map((s) => `[${fmtStamp(s.start)}] ${s.text}`)
+          .join("\n");
+        return { context: around, atSec: segs[idx].start };
+      }
+    }
+    const blocks = noteBlocksRef.current.map(
+      (b) => `[${b.startSec !== null ? fmtStamp(b.startSec) : "—"}] ${b.text}`,
+    );
+    const notesCtx = blocks.slice(-6).join("\n");
+    const transCtx = segs
+      .slice(Math.max(0, (idx >= 0 ? idx : segs.length) - 4), (idx >= 0 ? idx : segs.length - 1) + 3)
+      .map((s) => `[${fmtStamp(s.start)}] ${s.text}`)
+      .join("\n");
+    return { context: `${notesCtx}\n${transCtx}`, atSec: idx >= 0 ? segs[idx].start : null };
   }
 
   useEffect(() => {
@@ -234,8 +265,8 @@ export default function App() {
       }
       const anchor = sel.anchorNode;
       if (!anchor) return;
-      const inTranscript = !!(anchor.parentElement?.closest?.(".transcript"));
-      const inNotes = !!(anchor.parentElement?.closest?.(".notes-input"));
+      const inTranscript = !!(anchor.parentElement?.closest?.(".stream"));
+      const inNotes = !!(anchor.parentElement?.closest?.(".composer"));
       if (!inTranscript && !inNotes) {
         setPendingSelection(null);
         return;
@@ -251,11 +282,14 @@ export default function App() {
     if (!pendingSelection || !chatDraft.trim()) return;
     const b = await backend();
     const sessionDir =
-      sessionDirRef.current ||
-      (lastSession ?? "") ||
-      `${sessionDirPlaceholder()}`;
+      sessionDirRef.current || (lastSession ?? "") || sessionDirPlaceholder();
     const question = chatDraft.trim();
     const selection = pendingSelection;
+    const { context, atSec: selectionAt } = selectionContext(
+      selectionOrigin ?? "transcript",
+      selection,
+    );
+    const atSec = recording ? elapsed : selectionAt;
     setChatDraft("");
     setPendingSelection(null);
     setAiThinking(true);
@@ -263,13 +297,40 @@ export default function App() {
       const entry = await b.invoke<MarginEntry>("ai_selection_chat", {
         selection,
         question,
-        atSec: recording ? elapsed : null,
-        context: selectionContext(selectionOrigin ?? "transcript"),        sessionDir,
+        atSec,
+        context,
+        sessionDir,
       });
       if (entry) setMargin((m) => [...m, entry]);
     } finally {
       setAiThinking(false);
     }
+  }
+
+  // Add the user's OWN note about the selection: a note block carrying the
+  // selection as its reference, anchored to the selection's tape position.
+  async function addSelectionNote() {
+    if (!pendingSelection || !chatDraft.trim()) return;
+    const text = chatDraft.trim();
+    const selection = pendingSelection;
+    const { atSec: selectionAt } = selectionContext(
+      selectionOrigin ?? "transcript",
+      selection,
+    );
+    const startSec = recording ? elapsed : selectionAt;
+    setChatDraft("");
+    setPendingSelection(null);
+    setNoteBlocks((nb) => [...nb, { startSec, text, selectionRef: selection }]);
+    try {
+      const b = await backend();
+      await b.invoke("note_add", {
+        sessionDir: sessionDirRef.current || lastSession || "",
+        startSec,
+        endSec: startSec,
+        text,
+        selectionRef: selection,
+      });
+    } catch {}
   }
 
   async function toggleRecord() {
@@ -294,11 +355,41 @@ export default function App() {
     }
   }
 
-  function onNoteChange(text: string) {
-    setNoteText(text);
+  // Composer: Enter commits the note as a block injected into the stream at
+  // the point typing began; Shift+Enter inserts a line break.
+  function onComposeChange(text: string) {
+    if (recording && composeStartRef.current === null && composeDraft === "" && text) {
+      composeStartRef.current = elapsedRef.current;
+    }
+    setComposeDraft(text);
     if (recording) {
       lastNoteEdit.current = Date.now();
       charsSinceAi.current += Math.max(1, text.length - notesRef.current.length);
+    }
+  }
+
+  async function commitCompose() {
+    const text = composeDraft.trim();
+    if (!text) return;
+    const startSec = recording ? (composeStartRef.current ?? elapsedRef.current) : null;
+    setComposeDraft("");
+    composeStartRef.current = null;
+    setNoteBlocks((nb) => [...nb, { startSec, text }]);
+    try {
+      const b = await backend();
+      await b.invoke("note_add", {
+        sessionDir: sessionDirRef.current || lastSession || "",
+        startSec,
+        endSec: startSec !== null ? elapsedRef.current : null,
+        text,
+      });
+    } catch {}
+  }
+
+  function onComposeKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      commitCompose();
     }
   }
 
@@ -325,6 +416,23 @@ export default function App() {
       noteContext,
       text,
     }).catch(() => {});
+  }
+
+  // The stream: transcript segments + note blocks, ordered by tape position.
+  // Notes without an anchor (written outside a capture) go last.
+  function mergedStream() {
+    const items = [
+      ...segments.map((s) => ({ type: "seg" as const, ...s })),
+      ...noteBlocks.map((n) => ({
+        type: "note" as const,
+        start: n.startSec ?? Infinity,
+        startSec: n.startSec,
+        text: n.text,
+        selectionRef: n.selectionRef,
+      })),
+    ];
+    items.sort((a, b) => a.start - b.start);
+    return items;
   }
 
   const statusOk = (ollama?.local_online || ollama?.cloud_online) ?? false;
@@ -395,30 +503,45 @@ export default function App() {
         </header>
 
         <section className="pad">
-          <div className="binding" aria-hidden />
           <div className="pad-columns">
             <div className="pad-col notes-col">
-              <div className="transcript" ref={transcriptRef}>
-                {segments.length === 0 ? (
+              <div className="transcript stream" ref={streamRef}>
+                {mergedStream().map((item, i) =>
+                  item.type === "note" ? (
+                    <div key={`n${i}`} className="note-block">
+                      <span className="note-block-stamp">
+                        ✎ {item.startSec !== null ? fmtStamp(item.startSec) : "now"}
+                      </span>
+                      {item.selectionRef && (
+                        <p className="note-ref">re: “{clip(item.selectionRef, 110)}”</p>
+                      )}
+                      <p className="note-block-text">{item.text}</p>
+                    </div>
+                  ) : (
+                    <p key={item.id} className="segment">
+                      <span className="segment-stamp">{fmtStamp(item.start)}</span>
+                      {item.text}
+                    </p>
+                  ),
+                )}
+                {segments.length === 0 && noteBlocks.length === 0 && (
                   <p className="placeholder">
                     {recording
-                      ? "listening… speech is transcribed here every few seconds (whisper, local)."
+                      ? "listening… speech is transcribed here; type below and hit Enter to pin your note to this point on the tape."
                       : "press Record — the pad fills with a live transcript as you listen."}
                   </p>
-                ) : (
-                  segments.map((seg) => (
-                    <p key={seg.id} className="segment">
-                      <span className="segment-stamp">{fmtStamp(seg.start)}</span>
-                      {seg.text}
-                    </p>
-                  ))
                 )}
               </div>
               <textarea
-                className="notes-input"
-                value={noteText}
-                onChange={(e) => onNoteChange(e.target.value)}
-                placeholder="Take notes while listening — each line is anchored to the tape; the AI reads your margin only when you write."
+                className="notes-input composer"
+                value={composeDraft}
+                onChange={(e) => onComposeChange(e.target.value)}
+                onKeyDown={onComposeKeyDown}
+                placeholder={
+                  recording
+                    ? `write a note — Enter pins it at ${fmtStamp(elapsed)} on the tape (Shift+Enter for a new line)`
+                    : "write a note and hit Enter (Shift+Enter for a new line)"
+                }
               />
             </div>
 
@@ -474,7 +597,10 @@ export default function App() {
                     placeholder="ask the AI about this passage…"
                   />
                   <div className="chat-box-actions">
-                    <button onClick={sendSelectionChat}>Ask</button>
+                    <button onClick={sendSelectionChat}>Ask AI</button>
+                    <button className="note" onClick={addSelectionNote}>
+                      Add note
+                    </button>
                     <button className="ghost" onClick={() => setPendingSelection(null)}>
                       Cancel
                     </button>

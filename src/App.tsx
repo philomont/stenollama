@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "./api";
 
 interface OllamaStatus {
@@ -40,27 +40,32 @@ interface NoteBlock {
   image?: string | null;
 }
 
-// A burst bar: a new recording resumes the timeline here.
-interface BurstBar {
+// A block: a recording section of the timeline. Short gaps continue the
+// current block; a new block starts on user choice, after 1.5h idle, or
+// after summarization closes the block.
+interface Block {
   id: string;
-  at: string;
   index: number;
+  at: string;
+  closed: boolean;
+  summary: string | null;
+  summarizing?: boolean;
 }
 
+// A margin annotation. Kinds drive the right pips' colors:
+//   comment — live AI comment during capture (purple)
+//   chat    — AI chat about a selected passage (blue)
+//   flag    — custom flag on a selected passage (red)
 interface MarginEntry {
-  id?: string;
-  createdAt?: string;
-  kind: "comment" | "chat";
-  author: "human" | "ai" | "human->ai";
-  at?: string;
-  atSec: number | null;
+  id: string;
+  kind: "comment" | "chat" | "flag";
+  at: string;
+  refId?: string | null;
   noteContext?: string | null;
   text: string;
   selection?: string;
   question?: string;
 }
-
-// ---- formatting -----------------------------------------------------------
 
 function fmtDT(iso: string): string {
   const d = new Date(iso);
@@ -80,94 +85,76 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-// AI typing-trigger debounce: fire once the user pauses after typing enough.
 const AI_TRIGGER_IDLE_MS = 6000;
 const AI_TRIGGER_MIN_CHARS = 40;
+// A new block starts after this much idle time since the last recording.
+const NEW_BLOCK_AFTER_MS = 1.5 * 60 * 60 * 1000;
+
+type RecordSource = "system" | "mic";
 
 export default function App() {
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [wallClock, setWallClock] = useState(fmtDT(nowIso()));
   const [level, setLevel] = useState(-90);
   const [lastSession, setLastSession] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
   const [asrError, setAsrError] = useState<string | null>(null);
 
-  // The timeline: segments + note blocks + burst bars, ordered by datetime.
+  // The timeline.
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [noteBlocks, setNoteBlocks] = useState<NoteBlock[]>([]);
-  const [bursts, setBursts] = useState<BurstBar[]>([]);
-  const [summaries, setSummaries] = useState<Record<string, string>>({});
-  const [summarizing, setSummarizing] = useState<string | null>(null);
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [margin, setMargin] = useState<MarginEntry[]>([]);
 
   // Composer.
   const [composeDraft, setComposeDraft] = useState("");
   const [editingNote, setEditingNote] = useState<{ id: string; draft: string } | null>(null);
 
-  // Margin.
-  const [margin, setMargin] = useState<MarginEntry[]>([]);
+  // Selection → 2-step annotate.
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [chatAnchorTop, setChatAnchorTop] = useState(40);
+  const [action, setAction] = useState<null | "chat" | "flag" | "annotate">(null);
+  const [actionDraft, setActionDraft] = useState("");
+  const [flagDraft, setFlagDraft] = useState("");
+  const [knownFlags, setKnownFlags] = useState<string[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
 
-  // Custom flags on selections (right-side review desk).
-  const [flagDraft, setFlagDraft] = useState("");
-  const [flagging, setFlagging] = useState(false);
-  const [knownFlags, setKnownFlags] = useState<string[]>([]);
-  const [flags, setFlags] = useState<{ id: string; flag: string; selection: string; at: string }[]>([]);
+  // Recording controls.
+  const [source, setSource] = useState<RecordSource>("system");
+  const [forceNewBlock, setForceNewBlock] = useState(false);
 
-  // Selection chat.
-  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
-  const [selectionOrigin, setSelectionOrigin] = useState<null | "transcript" | "notes">(null);
-  const [chatDraft, setChatDraft] = useState("");
-  const [chatAnchorY, setChatAnchorY] = useState(0);
+  // Layout: annotations positioned at their anchors inside the one scroller.
+  const [marginTops, setMarginTops] = useState<Record<string, number>>({});
+  const [railTops, setRailTops] = useState<Record<string, number>>({});
 
   // Refs.
   const nextId = useRef(1);
-  const streamRef = useRef<HTMLDivElement>(null);
-  const feedRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const segmentsRef = useRef<TranscriptSegment[]>([]);
   const noteBlocksRef = useRef<NoteBlock[]>([]);
-  const burstsRef = useRef<BurstBar[]>([]);
+  const blocksRef = useRef<Block[]>([]);
   const recordingRef = useRef(false);
   const sessionDirRef = useRef<string | null>(null);
+  const lastStopAtRef = useRef<string | null>(null);
   const lastAiAt = useRef(0);
   const lastNoteEdit = useRef(0);
   const charsSinceAi = useRef(0);
   const aiPending = useRef(false);
   const composeDraftRef = useRef("");
-  const lastStopAtRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    segmentsRef.current = segments;
-  }, [segments]);
-  useEffect(() => {
-    noteBlocksRef.current = noteBlocks;
-  }, [noteBlocks]);
-  useEffect(() => {
-    burstsRef.current = bursts;
-  }, [bursts]);
-  useEffect(() => {
-    recordingRef.current = recording;
-  }, [recording]);
-  useEffect(() => {
-    composeDraftRef.current = composeDraft;
-  }, [composeDraft]);
+  useEffect(() => { segmentsRef.current = segments; }, [segments]);
+  useEffect(() => { noteBlocksRef.current = noteBlocks; }, [noteBlocks]);
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
+  useEffect(() => { composeDraftRef.current = composeDraft; }, [composeDraft]);
 
-  // Wall clock tick.
-  useEffect(() => {
-    const iv = setInterval(() => setWallClock(fmtDT(nowIso())), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // Backend wiring.
   useEffect(() => {
     backend()
       .then((b) => b.invoke<OllamaStatus>("ollama_status"))
       .then(setOllama)
-      .catch(() =>
-        setOllama({ local_online: false, local_version: null, cloud_online: false }),
-      );
+      .catch(() => setOllama({ local_online: false, local_version: null, cloud_online: false }));
   }, []);
 
   useEffect(() => {
@@ -217,17 +204,12 @@ export default function App() {
       charsSinceAi.current = 0;
       aiPending.current = true;
       lastAiAt.current = Date.now();
-      setAiThinking(true);
       backend()
         .then((b) =>
           b.invoke<MarginEntry | null>("ai_margin_comment", {
             at: nowIso(),
             noteBlock: composeDraftRef.current.trim(),
-            transcriptWindow: segmentsRef.current
-              .slice(-8)
-              .map((s) => s.text)
-              .join(" ")
-              .slice(-1500),
+            transcriptWindow: segmentsRef.current.slice(-8).map((s) => s.text).join(" ").slice(-1500),
             sessionDir: sessionDirRef.current,
           }),
         )
@@ -237,78 +219,153 @@ export default function App() {
         .catch(() => {})
         .finally(() => {
           aiPending.current = false;
-          setAiThinking(false);
         });
     }, 1000);
     return () => clearInterval(iv);
   }, []);
 
+  // Selection → the annotation picker pops up on the right, inline with the
+  // selection. Both columns are the same page, so the anchor is measured
+  // against the shared scroller's content.
   useEffect(() => {
-    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
-  }, [margin, aiThinking]);
-
-  // Selection → chat box (or own note), aligned inline with the selected area.
-  useEffect(() => {
-    function onMouseUp(ev: MouseEvent) {
+    function onMouseUp() {
       const sel = window.getSelection();
       const text = sel?.toString().trim() ?? "";
       if (text.length < 12 || !sel || sel.rangeCount === 0) {
         setPendingSelection(null);
+        setAction(null);
         return;
       }
-      const anchor = sel.anchorNode;
-      const node = anchor?.parentElement;
+      const node = sel.anchorNode?.parentElement;
       if (!node) return;
-      const inStream = !!(node.closest?.(".stream") || node.closest?.(".segment") || node.closest?.(".note-block"));
-      const inComposer = !!(node.closest?.(".composer"));
-      if (!inStream && !inComposer) {
+      const inLeft = !!(
+        node.closest?.(".stream") ||
+        node.closest?.(".segment") ||
+        node.closest?.(".note-block") ||
+        node.closest?.(".composer")
+      );
+      if (!inLeft) {
         setPendingSelection(null);
+        setAction(null);
         return;
       }
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+      const anchorEl = node.closest?.("[data-at]") as HTMLElement | null;
+      const anchorRect = (anchorEl ?? node).getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const top = anchorRect.top - scrollerRect.top + scroller.scrollTop;
       setPendingSelection(text);
-      setSelectionOrigin(inComposer ? "notes" : "transcript");
-      // keep the chat box inline with the selection's vertical position
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      const col = document.querySelector(".margin-col")?.getBoundingClientRect();
-      const y = col ? Math.max(col.top + 10, Math.min(rect.top - 10, col.bottom - 210)) : ev.clientY;
-      setChatAnchorY(col ? y - col.top : 100);
+      setAction(null);
+      setActionDraft("");
+      setChatAnchorTop(Math.max(12, top));
     }
     document.addEventListener("mouseup", onMouseUp);
     return () => document.removeEventListener("mouseup", onMouseUp);
   }, []);
 
-  // ---- timeline actions ----------------------------------------------------
+  // ---- recording -----------------------------------------------------------
+
+  function newBlockNeeded(): boolean {
+    const bs = blocksRef.current;
+    const last = bs[bs.length - 1];
+    if (forceNewBlock) return true;
+    if (last?.closed) return true;
+    const since = lastStopAtRef.current;
+    if (since && Date.now() - new Date(since).getTime() > NEW_BLOCK_AFTER_MS) return true;
+    return false;
+  }
+
+  async function startRecording(src: RecordSource) {
+    const b = await backend();
+    const info = await b.invoke<{ sessionDir: string; burstIndex: number; resumed: boolean; at: string }>(
+      "capture_start",
+      { notebook: "Inbox", source: src },
+    );
+    sessionDirRef.current = info.sessionDir;
+    setLastSession(info.sessionDir);
+    setRecording(true);
+    charsSinceAi.current = 0;
+    setForceNewBlock(false);
+    if (newBlockNeeded() || blocksRef.current.length === 0) {
+      const idx = blocksRef.current.length + 1;
+      setBlocks((bs) => [...bs, { id: `block-${nextId.current++}`, index: idx, at: info.at, closed: false, summary: null }]);
+    }
+  }
 
   async function toggleRecord() {
     setError(null);
     setAsrError(null);
     try {
-      const b = await backend();
       if (!recording) {
-        const info = await b.invoke<{ sessionDir: string; burstIndex: number; resumed: boolean; at: string }>(
-          "capture_start",
-          { notebook: "Inbox" },
-        );
-        sessionDirRef.current = info.sessionDir;
-        setLastSession(info.sessionDir);
-        setRecording(true);
-        charsSinceAi.current = 0;
-        // Notes typed prior to this recording start a new entry: the burst
-        // bar goes above them so they open the new section.
-        const since = lastStopAtRef.current;
-        const pending = since
-          ? noteBlocksRef.current.filter((nb) => nb.at > (since as string))
-          : [];
-        const barAt = pending.length ? pending[0].at : info.at;
-        setBursts((bu) => [...bu, { id: `burst-${nextId.current++}`, at: barAt, index: info.burstIndex }]);
+        await startRecording(source);
       } else {
-        await b.invoke("capture_stop");
+        await backend().then((b) => b.invoke("capture_stop"));
       }
     } catch (e) {
       setError(String(e));
       setRecording(false);
     }
   }
+
+  // Switch the audio feed: stop the current recording and resume as a new
+  // burst from the other source — the block continues.
+  async function toggleSource() {
+    const next: RecordSource = source === "system" ? "mic" : "system";
+    if (recording) {
+      try {
+        await backend().then((b) => b.invoke("capture_stop"));
+      } catch {}
+      setSource(next);
+      await new Promise((r) => setTimeout(r, 600));
+      await startRecording(next);
+    } else {
+      setSource(next);
+    }
+  }
+
+  // ---- block summaries ------------------------------------------------------
+
+  function blockEntries(block: Block): string[] {
+    const bs = blocksRef.current;
+    const idx = bs.findIndex((x) => x.id === block.id);
+    const nextBar = bs[idx + 1]?.at;
+    const inRange = (at: string) => at >= block.at && (!nextBar || at < nextBar);
+    return [
+      ...segmentsRef.current.filter((s) => inRange(s.at)).map((s) => s.text),
+      ...noteBlocksRef.current.filter((n) => inRange(n.at)).map((n) => n.text),
+    ].filter((t) => t.trim());
+  }
+
+  async function summarizeBlock(block: Block) {
+    setBlocks((bs) => bs.map((x) => (x.id === block.id ? { ...x, summarizing: true } : x)));
+    try {
+      const b = await backend();
+      const previous = blocksRef.current
+        .filter((x) => x.index < block.index && x.summary)
+        .map((x) => x.summary as string);
+      const content = blockEntries(block).join("\n");
+      const summary = await b.invoke<string | null>("ai_block_summary", {
+        content,
+        previousSummaries: previous,
+      });
+      if (summary) {
+        setBlocks((bs) =>
+          bs.map((x) => (x.id === block.id ? { ...x, summarizing: false, closed: true, summary } : x)),
+        );
+        b.invoke("block_summary_add", {
+          sessionDir: sessionDirRef.current || lastSession || "",
+          blockIndex: block.index,
+          at: nowIso(),
+          text: summary,
+        }).catch(() => {});
+      }
+    } finally {
+      setBlocks((bs) => bs.map((x) => (x.id === block.id ? { ...x, summarizing: false } : x)));
+    }
+  }
+
+  // ---- composer -------------------------------------------------------------
 
   async function commitCompose() {
     const text = composeDraft.trim();
@@ -317,16 +374,10 @@ export default function App() {
     const tags = (text.match(/#[\w-]+/g) || []).map((t) => t.slice(1));
     const id = `note-${nextId.current++}`;
     setComposeDraft("");
-    const block: NoteBlock = { id, at, text, tags };
-    setNoteBlocks((nb) => [...nb, block]);
+    setNoteBlocks((nb) => [...nb, { id, at, text, tags }]);
     try {
       const b = await backend();
-      await b.invoke("note_add", {
-        sessionDir: sessionDirRef.current || lastSession || "",
-        at,
-        text,
-        tags,
-      });
+      await b.invoke("note_add", { sessionDir: sessionDirRef.current || lastSession || "", at, text, tags });
     } catch {}
   }
 
@@ -345,7 +396,6 @@ export default function App() {
     }
   }
 
-  // Paste images into the composer → attachment note block.
   async function onComposePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/"));
     if (!item) return;
@@ -359,26 +409,10 @@ export default function App() {
     });
     try {
       const b = await backend();
-      const rel = await b.invoke<string>("attachment_add", {
-        sessionDir: sessionDirRef.current,
-        dataUrl,
-      });
+      const rel = await b.invoke<string>("attachment_add", { sessionDir: sessionDirRef.current, dataUrl });
       const at = nowIso();
-      const block: NoteBlock = {
-        id: `note-${nextId.current++}`,
-        at,
-        text: "",
-        tags: [],
-        image: dataUrl,
-      };
-      setNoteBlocks((nb) => [...nb, block]);
-      await b.invoke("note_add", {
-        sessionDir: sessionDirRef.current,
-        at,
-        text: "",
-        tags: [],
-        image: rel,
-      });
+      setNoteBlocks((nb) => [...nb, { id: `note-${nextId.current++}`, at, text: "", tags: [], image: dataUrl }]);
+      await b.invoke("note_add", { sessionDir: sessionDirRef.current, at, text: "", tags: [], image: rel });
     } catch {}
   }
 
@@ -389,87 +423,52 @@ export default function App() {
     setNoteBlocks((nb) => nb.map((n) => (n.id === id ? { ...n, text: clean } : n)));
     try {
       const b = await backend();
-      await b.invoke("note_edit", {
-        sessionDir: sessionDirRef.current || lastSession || "",
-        id,
-        at: nowIso(),
-        text: clean,
-      });
+      await b.invoke("note_edit", { sessionDir: sessionDirRef.current || lastSession || "", id, at: nowIso(), text: clean });
     } catch {}
   }
 
-  async function summarizeEntry(refId: string, text: string) {
-    if (summarizing) return;
-    setSummarizing(refId);
-    try {
-      const b = await backend();
-      const summary = await b.invoke<string | null>("ai_entry_summary", {
-        text,
-        neighbors: neighborsOf(refId),
-      });
-      if (summary) {
-        setSummaries((s) => ({ ...s, [refId]: summary }));
-        b.invoke("entry_summary_add", {
-          sessionDir: sessionDirRef.current || lastSession || "",
-          refId,
-          at: nowIso(),
-          text: summary,
-        }).catch(() => {});
-      }
-    } finally {
-      setSummarizing(null);
-    }
+  // ---- annotation actions ---------------------------------------------------
+
+  function refOfSelection(selection: string): string | null {
+    const seg = segmentsRef.current.find(
+      (s) => s.text.includes(selection.slice(0, 40)) || selection.slice(0, 40).includes(s.text.slice(0, 40)),
+    );
+    return seg?.id ?? null;
   }
 
-  function neighborsOf(refId: string): string[] {
-    const all = timeline();
-    const idx = all.findIndex((x) => x.id === refId);
-    return all
-      .slice(Math.max(0, idx - 2), idx + 3)
-      .map((x) => ("text" in x ? x.text : ""))
-      .filter(Boolean);
-  }
-
-  // ---- selection actions ---------------------------------------------------
-
-  function selectionContext(origin: "transcript" | "notes", selection: string): { context: string; at: string | null; refId: string | null } {
+  function selectionContext(selection: string): string {
     const segs = segmentsRef.current;
     const probe = selection.slice(0, 40);
     const idx = segs.findIndex((s) => s.text.includes(probe) || probe.includes(s.text.slice(0, 40)));
-    if (origin === "transcript" && idx >= 0) {
-      const around = segs
+    if (idx >= 0) {
+      return segs
         .slice(Math.max(0, idx - 3), idx + 4)
         .map((s) => `[${fmtDT(s.at)}] ${s.text}`)
         .join("\n");
-      return { context: around, at: segs[idx].at, refId: segs[idx].id };
     }
-    const blocks = noteBlocksRef.current.map((b) => `[${fmtDT(b.at)}] ${b.text}`);
-    const transCtx = segs
-      .slice(Math.max(0, (idx >= 0 ? idx : segs.length) - 4), (idx >= 0 ? idx : segs.length - 1) + 3)
-      .map((s) => `[${fmtDT(s.at)}] ${s.text}`)
-      .join("\n");
-    return { context: `${blocks.slice(-6).join("\n")}\n${transCtx}`, at: idx >= 0 ? segs[idx].at : null, refId: idx >= 0 ? segs[idx].id : null };
+    return segs.slice(-8).map((s) => `[${fmtDT(s.at)}] ${s.text}`).join("\n");
   }
 
-  async function sendSelectionChat() {
-    if (!pendingSelection || !chatDraft.trim()) return;
-    const b = await backend();
-    const sessionDir = sessionDirRef.current || lastSession || "notebooks/Inbox/sessions/unsaved";
-    const question = chatDraft.trim();
+  async function doChat() {
+    if (!pendingSelection || !actionDraft.trim()) return;
+    const question = actionDraft.trim();
     const selection = pendingSelection;
-    const { context } = selectionContext(selectionOrigin ?? "transcript", selection);
+    const refId = refOfSelection(selection);
     const at = nowIso();
-    setChatDraft("");
+    setActionDraft("");
     setPendingSelection(null);
+    setAction(null);
     setAiThinking(true);
     try {
+      const b = await backend();
       const entry = await b.invoke<MarginEntry>("ai_selection_chat", {
         selection,
         question,
         at,
         atSec: null,
-        context,
-        sessionDir,
+        context: selectionContext(selection),
+        sessionDir: sessionDirRef.current || lastSession || "notebooks/Inbox/sessions/unsaved",
+        refId,
       });
       if (entry) setMargin((m) => [...m, entry]);
     } finally {
@@ -477,47 +476,34 @@ export default function App() {
     }
   }
 
-  // Custom flag on the selection: name it, it lands in the margin + rail.
-  async function addSelectionFlag() {
+  async function doFlag() {
     if (!pendingSelection || !flagDraft.trim()) return;
     const flag = flagDraft.trim().replace(/^#/, "");
     const selection = pendingSelection;
+    const refId = refOfSelection(selection);
     const at = nowIso();
     setFlagDraft("");
-    setFlagging(false);
     setPendingSelection(null);
+    setAction(null);
     const id = `flag-${nextId.current++}`;
-    setFlags((f) => [...f, { id, flag, selection, at }]);
+    setMargin((m) => [...m, { id, kind: "flag", at, refId, text: flag, selection }]);
     setKnownFlags((k) => (k.includes(flag) ? k : [...k, flag]));
     try {
       const b = await backend();
-      await b.invoke("flag_add", {
-        sessionDir: sessionDirRef.current || lastSession || "",
-        flag,
-        selection,
-        at,
-      });
+      await b.invoke("flag_add", { sessionDir: sessionDirRef.current || lastSession || "", flag, selection, at, refId });
     } catch {}
   }
 
-  // AI summary of the selected entry, appended to that entry as a block.
-  async function summarizeSelection() {
-    if (!pendingSelection) return;
-    const { refId } = selectionContext(selectionOrigin ?? "transcript", pendingSelection);
-    if (!refId) return;
-    setPendingSelection(null);
-    await summarizeEntry(refId, pendingSelection);
-  }
-
-  async function addSelectionNote() {
-    if (!pendingSelection || !chatDraft.trim()) return;
-    const text = chatDraft.trim();
+  async function doAnnotate() {
+    if (!pendingSelection || !actionDraft.trim()) return;
+    const text = actionDraft.trim();
     const selection = pendingSelection;
     const at = nowIso();
-    setChatDraft("");
+    setActionDraft("");
     setPendingSelection(null);
-    const id = `note-${nextId.current++}`;
+    setAction(null);
     const tags = (text.match(/#[\w-]+/g) || []).map((t) => t.slice(1));
+    const id = `note-${nextId.current++}`;
     setNoteBlocks((nb) => [...nb, { id, at, text, tags, selectionRef: selection }]);
     try {
       const b = await backend();
@@ -531,52 +517,100 @@ export default function App() {
     } catch {}
   }
 
-  // ---- the timeline --------------------------------------------------------
+  // ---- layout: annotations + pips aligned to their anchors ------------------
 
-  type Entry =
-    | { type: "seg"; id: string; at: string; text: string }
-    | { type: "note"; id: string; at: string; text: string; tags: string[]; selectionRef?: string | null; image?: string | null }
-    | { type: "burst"; id: string; at: string; index: number };
+  // The left timeline: segments + notes ordered by datetime.
+  const tl = useMemo(
+    () =>
+      [
+        ...segments.map((s) => ({ type: "seg" as const, id: s.id, at: s.at, text: s.text, tags: [] as string[] })),
+        ...noteBlocks.map((n) => ({
+          type: "note" as const,
+          id: n.id,
+          at: n.at,
+          text: n.text,
+          tags: n.tags,
+          selectionRef: n.selectionRef ?? null,
+          image: n.image ?? null,
+        })),
+      ].sort((a, b) => a.at.localeCompare(b.at)),
+    [segments, noteBlocks],
+  );
 
-  function timeline(): Entry[] {
-    const items: Entry[] = [
-      ...segments.map((s) => ({ type: "seg" as const, id: s.id, at: s.at, text: s.text })),
-      ...noteBlocks.map((n) => ({
-        type: "note" as const,
-        id: n.id,
-        at: n.at,
-        text: n.text,
-        tags: n.tags,
-        selectionRef: n.selectionRef,
-        image: n.image,
-      })),
-      ...bursts.map((bu) => ({ type: "burst" as const, id: bu.id, at: bu.at, index: bu.index })),
-    ];
-    const prio: Record<string, number> = { burst: 0, seg: 1, note: 2 };
-    items.sort((a, b) => a.at.localeCompare(b.at) || prio[a.type] - prio[b.type]);
-    return items;
-  }
+  // Everything that renders in the scroller carries data-at; entries with
+  // ids are anchorable (segments, notes, blocks).
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    const topOf = (el: HTMLElement | null) =>
+      el ? el.getBoundingClientRect().top - scrollerTop : null;
+
+    // Left rail pips: at their entry's position.
+    const railT: Record<string, number> = {};
+    tl.forEach((item) => {
+      const el = document.getElementById(`entry-${item.id}`);
+      const top = topOf(el);
+      if (top !== null) railT[item.id] = top;
+    });
+    blocks.forEach((block) => {
+      const el = document.getElementById(`entry-${block.id}`);
+      const top = topOf(el);
+      if (top !== null) railT[block.id] = top;
+    });
+    setRailTops(railT);
+
+    // Margin annotations: at their anchor (the entry at/before their time),
+    // stacked so they never overlap.
+    const anchorable = Array.from(scroller.querySelectorAll<HTMLElement>("[data-at]")).sort(
+      (a, b) => (a.dataset.at! < b.dataset.at! ? -1 : 1),
+    );
+    const anchorTopFor = (m: MarginEntry): number => {
+      if (m.refId) {
+        const el = document.getElementById(`entry-${m.refId}`);
+        const top = topOf(el);
+        if (top !== null) return top;
+      }
+      let top = 16;
+      for (const el of anchorable) {
+        if (el.dataset.at! <= m.at) {
+          const t = topOf(el);
+          if (t !== null && t >= 0) top = Math.max(top, t);
+        }
+      }
+      return top;
+    };
+    const sorted = [...margin].sort((a, b) => anchorTopFor(a) - anchorTopFor(b));
+    const tops: Record<string, number> = {};
+    let prevBottom = 0;
+    sorted.forEach((m) => {
+      const el = scroller.querySelector<HTMLElement>(`[data-margin-id="${m.id}"]`);
+      const h = el?.offsetHeight ?? 64;
+      const top = Math.max(anchorTopFor(m), prevBottom + 10);
+      tops[m.id] = top;
+      prevBottom = top + h;
+    });
+    setMarginTops(tops);
+  }, [tl, blocks, margin, pendingSelection]);
 
   const statusOk = (ollama?.local_online || ollama?.cloud_online) ?? false;
   const levelPct = Math.max(0, Math.min(100, ((level + 60) / 60) * 100));
-  const tl = timeline();
 
-  // Fast-scroll markers: bursts, notes, reactions, summaries.
-  const markers = tl
-    .filter((x) => x.type === "burst" || (x.type === "note" && (x.text || x.image)) || (x.type === "seg" && summaries[x.id]))
-    .map((x) => ({
-      id: x.id,
-      type: x.type,
-      at: x.at,
-      label:
-        x.type === "burst"
-          ? "— recording resumed"
-          : x.type === "note"
-            ? (x as Extract<Entry, { type: "note" }>).selectionRef
-              ? `✎ re: ${clip((x as Extract<Entry, { type: "note" }>).selectionRef, 60)}`
-              : `✎ ${clip(x.text, 60) || "image"}`
-            : `≡ ${clip(summaries[x.id], 60)}`,
-    }));
+  // Rail markers (left): blocks + notes + segments-with-annotations.
+  const railMarkers = useMemo(
+    () =>
+      [
+        ...blocks.map((b) => ({
+          id: b.id,
+          at: b.at,
+          label: b.summary ? `≡ ${clip(b.summary, 70)}` : `— block ${b.index}`,
+        })),
+        ...tl
+          .filter((x) => x.type === "note" && (x.text || x.image))
+          .map((x) => ({ id: x.id, at: x.at, label: `✎ ${clip(x.text, 70) || "image"}` })),
+      ].sort((a, b) => a.at.localeCompare(b.at)),
+    [blocks, tl],
+  );
 
   return (
     <div className="desk">
@@ -614,200 +648,245 @@ export default function App() {
       <main className="desk-main">
         <header className="pad-header">
           <button className="icon-btn" onClick={() => setDrawerOpen(!drawerOpen)}>☰</button>
-          <button className={`record-btn ${recording ? "recording" : ""}`} onClick={toggleRecord}>
-            {recording ? "■ Stop" : "● Record"}
-          </button>
-          <span className="session-clock">{wallClock}</span>
-          <span className="header-title">{recording ? "on the record" : "timeline open — recording paused is ignored"}</span>
+          <span className="header-title">{recording ? "on the record" : "timeline"}</span>
           <div className="level-meter" aria-hidden>
             <div className="level-bar" style={{ width: `${levelPct}%` }} />
           </div>
         </header>
 
         <section className="pad">
-          <div className="pad-columns">
-            <div className="pad-col notes-col">
-              <div className="stream-wrap">
-                <div className="stream" ref={streamRef}>
-                  {tl.map((item) =>
-                    item.type === "burst" ? (
-                      <div key={item.id} className="burst-bar" id={`entry-${item.id}`}>
-                        <span>— {item.index === 1 ? "recording started" : `recording #${item.index} resumed`} · {fmtDTLong(item.at)} —</span>
-                      </div>
-                    ) : item.type === "seg" ? (
-                      <div key={item.id} className="entry" id={`entry-${item.id}`}>
-                        <p className="segment">
-                          <span className="segment-stamp">{fmtDT(item.at)}</span>
-                          {item.text}
-                        </p>
-                        {summaries[item.id] && (
-                          <p className="entry-summary">≡ {summaries[item.id]}</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div key={item.id} className="note-block" id={`entry-${item.id}`}>
-                        <span className="note-block-stamp">✎ {fmtDT(item.at)}</span>
-                        {item.selectionRef && (
-                          <p className="note-ref">re: “{clip(item.selectionRef, 110)}”</p>
-                        )}
-                        {editingNote?.id === item.id ? (
-                          <textarea
-                            className="note-edit"
-                            autoFocus
-                            value={editingNote.draft}
-                            onChange={(e) => setEditingNote({ id: item.id, draft: e.target.value })}
-                            onBlur={() => saveNoteEdit(item.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                saveNoteEdit(item.id);
-                              }
-                            }}
-                          />
-                        ) : (
-                          <>
-                            {item.image && (
-                              <img className="note-image" src={item.image} alt="note attachment" />
-                            )}
-                            {item.text && (
-                              <p
-                                className="note-block-text"
-                                onClick={() => setEditingNote({ id: item.id, draft: item.text })}
-                                title="click to edit"
-                              >
-                                <RichText text={item.text.replace(/#[\w-]+/g, "").trim()} />
-                              </p>
-                            )}
-                            {item.tags.length > 0 && (
-                              <p className="note-tags">
-                                {item.tags.map((t) => <span key={t} className="tag">#{t}</span>)}
-                              </p>
-                            )}
-                          </>
-                        )}
-                        {summaries[item.id] && <p className="entry-summary">≡ {summaries[item.id]}</p>}
-                      </div>
-                    ),
-                  )}
-                  {tl.length === 0 && (
+          {/* One page: both columns scroll together in a single scroller. */}
+          <div className="pad-scroll" ref={scrollRef}>
+            <div className="pad-columns">
+              <div className="pad-col notes-col">
+                <div className="stream">
+                  {blocks.length === 0 && tl.length === 0 && (
                     <p className="placeholder">
                       The timeline unfolds here — press Record, or just type a note and hit Enter.
                     </p>
                   )}
+                  {tl
+                    .filter((x) => blocks.length === 0 || x.at < blocks[0].at)
+                    .map((item) => (
+                      <NoteView key={item.id} item={item} editing={editingNote} setEditing={setEditingNote} onSave={saveNoteEdit} />
+                    ))}
+                  {blocks.map((block, bi) => {
+                    const nextBar = blocks[bi + 1]?.at;
+                    const inBlock = (at: string) => at >= block.at && (!nextBar || at < nextBar);
+                    return (
+                      <div key={block.id}>
+                        <div className="burst-bar" id={`entry-${block.id}`} data-at={block.at}>
+                          <span>— {bi === 0 ? "recording started" : `block ${block.index}`} · {fmtDTLong(block.at)} —</span>
+                        </div>
+                        {tl.filter((x) => inBlock(x.at)).map((item) => (
+                          <NoteView key={item.id} item={item} editing={editingNote} setEditing={setEditingNote} onSave={saveNoteEdit} />
+                        ))}
+                        {block.summary ? (
+                          <div className="block-summary-card">
+                            <span className="bs-head">≡ block {block.index} · closed</span>
+                            <p className="bs-text"><RichText text={block.summary} /></p>
+                          </div>
+                        ) : (
+                          <div className="block-footer">
+                            <button
+                              className="ghost-btn"
+                              onClick={() => summarizeBlock(block)}
+                              disabled={block.summarizing}
+                              title="AI summary of this block — closes it; the next recording opens a new block"
+                            >
+                              {block.summarizing ? "summarizing…" : "≡ summarize block"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="rail" aria-label="fast scroll markers">
-                  {markers.map((m) => (
+                {/* Left pips: auto-scrolling markers at their entries. */}
+                <div className="rail" aria-label="timeline markers">
+                  {railMarkers.map((m) => (
                     <div
                       key={m.id}
-                      className={`rail-marker ${m.type}`}
+                      className="rail-marker"
+                      style={{ position: "absolute", top: railTops[m.id] ?? 9999 }}
                       title={`${fmtDTLong(m.at)}  ${m.label}`}
                       onClick={() =>
                         document.getElementById(`entry-${m.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
                       }
                     >
-                      {m.type === "burst" ? "▬" : m.type === "note" ? "✎" : m.label.slice(0, 2)}
+                      {m.label.startsWith("—") ? "▬" : "✎"}
                     </div>
                   ))}
                 </div>
               </div>
-              <textarea
-                className="notes-input composer"
-                value={composeDraft}
-                onChange={(e) => onComposeChange(e.target.value)}
-                onKeyDown={onComposeKeyDown}
-                onPaste={onComposePaste}
-                placeholder="write a note — Enter adds it to the timeline · paste images · #tags · links"
-              />
-            </div>
 
-            <div className="pad-col margin-col">
-              <div className="margin-feed" ref={feedRef}>
-                {flags.length > 0 && (
-                  <div className="flag-strip">
-                    {flags.map((f) => (
-                      <span key={f.id} className="flag-chip" title={`${fmtDT(f.at)} — “${clip(f.selection, 80)}”`}>
-                        ⚑ {f.flag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {margin.length === 0 && flags.length === 0 && !aiThinking && (
-                  <p className="placeholder">
-                    The margin edits the timeline: select any passage to flag it,
-                    chat with the AI, or add your own note about it. Type in the
-                    pad while recording for live AI margin comments.
+              <div className="pad-col margin-col">
+                {margin.length === 0 && !aiThinking && !pendingSelection && (
+                  <p className="margin-empty">
+                    The margin edits the timeline: select any passage on the
+                    left, then pick an action here — AI chat, a flag, or your
+                    own annotation.
                   </p>
                 )}
-                {margin.map((m, i) =>
-                  m.kind === "chat" ? (
-                    <div key={m.id ?? i} className="margin-entry chat">
-                      <span className="margin-meta">
-                        <span className="author ai">chat</span>
-                        <span className="margin-time">{m.at ? fmtDT(m.at) : ""}</span>
-                      </span>
-                      <p className="chat-selection">“{clip(m.selection, 140)}”</p>
-                      <p className="chat-question">{m.question}</p>
-                      <p className="margin-text">{m.text}</p>
-                    </div>
-                  ) : (
-                    <div key={m.id ?? i} className={`margin-entry ${m.author === "ai" ? "ai" : "human"}`}>
-                      <span className="margin-meta">
-                        <span className={`author ${m.author}`}>{m.author === "ai" ? "AI" : "you"}</span>
-                        <span className="margin-time">{m.at ? fmtDT(m.at) : ""}</span>
-                      </span>
-                      {m.noteContext && <p className="note-quote">re: “{clip(m.noteContext, 90)}”</p>}
-                      <p className="margin-text"><RichText text={m.text} /></p>
-                    </div>
-                  ),
-                )}
-                {aiThinking && <p className="ai-thinking">AI is writing…</p>}
-              </div>
-
-              {pendingSelection && (
-                <div className="chat-box" style={{ top: chatAnchorY }}>
-                  <p className="chat-box-src">{selectionOrigin === "notes" ? "notes" : "transcript"} selection:</p>
-                  <p className="chat-box-quote">“{clip(pendingSelection, 160)}”</p>
-                  <input
-                    autoFocus
-                    value={chatDraft}
-                    onChange={(e) => setChatDraft(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && sendSelectionChat()}
-                    placeholder="ask the AI, or write your own note about this…"
-                  />
-                  {flagging && (
-                    <div className="flag-row">
-                      <input
-                        autoFocus
-                        list="known-flags"
-                        value={flagDraft}
-                        onChange={(e) => setFlagDraft(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && addSelectionFlag()}
-                        placeholder="flag name, e.g. important / verify / todo…"
-                      />
-                      <datalist id="known-flags">
-                        {knownFlags.map((f) => <option key={f} value={f} />)}
-                      </datalist>
-                    </div>
-                  )}
-                  <div className="chat-box-actions">
-                    <button onClick={sendSelectionChat}>Ask AI</button>
-                    <button className="note" onClick={addSelectionNote}>Add note</button>
-                    {!flagging ? (
-                      <button className="flag" onClick={() => setFlagging(true)}>⚑ Flag</button>
+                {margin.map((m) => (
+                  <div
+                    key={m.id}
+                    data-margin-id={m.id}
+                    data-at={m.at}
+                    className={`margin-entry kind-${m.kind}`}
+                    style={{ position: "absolute", top: marginTops[m.id] ?? 0, left: 12, right: 44 }}
+                  >
+                    {m.kind === "chat" ? (
+                      <>
+                        <span className="margin-meta">
+                          <span className="author ai">chat</span>
+                          <span className="margin-time">{fmtDT(m.at)}</span>
+                        </span>
+                        <p className="chat-selection">“{clip(m.selection, 140)}”</p>
+                        <p className="chat-question">{m.question}</p>
+                        <p className="margin-text"><RichText text={m.text} /></p>
+                      </>
+                    ) : m.kind === "flag" ? (
+                      <>
+                        <span className="margin-meta">
+                          <span className="author flag">⚑ {m.text}</span>
+                          <span className="margin-time">{fmtDT(m.at)}</span>
+                        </span>
+                        <p className="chat-selection">“{clip(m.selection, 140)}”</p>
+                      </>
                     ) : (
-                      <button className="flag" onClick={addSelectionFlag}>⚑ Set flag</button>
+                      <>
+                        <span className="margin-meta">
+                          <span className="author ai">{m.text.slice(0, 80)}</span>
+                          <span className="margin-time">{fmtDT(m.at)}</span>
+                        </span>
+                        {m.noteContext && <p className="note-quote">re: “{clip(m.noteContext, 90)}”</p>}
+                      </>
                     )}
-                    <button onClick={summarizeSelection} title="AI summary appended to this entry">≡ Summary</button>
-                    <button className="ghost" onClick={() => { setPendingSelection(null); setFlagging(false); }}>✕</button>
                   </div>
-                </div>
-              )}
+                ))}
+                {aiThinking && <p className="ai-thinking" style={{ position: "absolute", top: 12, left: 12 }}>AI is writing…</p>}
 
-              <ReviewNotes
-                sessionDir={() => sessionDirRef.current || lastSession || ""}
-                onSaved={setKnownFlags}
-              />
+                {/* Right pips: colored by annotation type. */}
+                <div className="pips" aria-label="annotation markers">
+                  {margin.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`pip ${m.kind}`}
+                      style={{ position: "absolute", top: (marginTops[m.id] ?? 0) + 6 }}
+                      title={`${fmtDTLong(m.at)} — ${m.kind === "comment" ? clip(m.text, 80) : m.kind === "chat" ? clip(m.question, 80) : "⚑ " + m.text}`}
+                      onClick={() =>
+                        scrollRef.current?.scrollTo({
+                          top: Math.max(0, (marginTops[m.id] ?? 0) - 120),
+                          behavior: "smooth",
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+
+                {/* Selection → 2-step annotation picker. */}
+                {pendingSelection && (
+                  <div className="chat-box" style={{ top: chatAnchorTop }}>
+                    <p className="chat-box-quote">“{clip(pendingSelection, 160)}”</p>
+                    {action === null && (
+                      <div className="action-select">
+                        <button onClick={() => setAction("chat")}>💬 AI chat</button>
+                        <button onClick={() => setAction("flag")}>⚑ Flag</button>
+                        <button onClick={() => setAction("annotate")}>✎ Annotate</button>
+                        <button className="ghost" onClick={() => setPendingSelection(null)}>✕</button>
+                      </div>
+                    )}
+                    {action === "chat" && (
+                      <>
+                        <input
+                          autoFocus
+                          value={actionDraft}
+                          onChange={(e) => setActionDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && doChat()}
+                          placeholder="ask the AI about this passage…"
+                        />
+                        <div className="chat-box-actions">
+                          <button onClick={doChat}>Ask</button>
+                          <button className="ghost" onClick={() => setAction(null)}>back</button>
+                        </div>
+                      </>
+                    )}
+                    {action === "flag" && (
+                      <>
+                        <input
+                          autoFocus
+                          list="known-flags"
+                          value={flagDraft}
+                          onChange={(e) => setFlagDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && doFlag()}
+                          placeholder="flag name, e.g. important / verify / todo…"
+                        />
+                        <datalist id="known-flags">
+                          {knownFlags.map((f) => <option key={f} value={f} />)}
+                        </datalist>
+                        <div className="chat-box-actions">
+                          <button className="flag" onClick={doFlag}>⚑ Set flag</button>
+                          <button className="ghost" onClick={() => setAction(null)}>back</button>
+                        </div>
+                      </>
+                    )}
+                    {action === "annotate" && (
+                      <>
+                        <input
+                          autoFocus
+                          value={actionDraft}
+                          onChange={(e) => setActionDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && doAnnotate()}
+                          placeholder="your note about this passage… #tags ok"
+                        />
+                        <div className="chat-box-actions">
+                          <button className="note" onClick={doAnnotate}>Add note</button>
+                          <button className="ghost" onClick={() => setAction(null)}>back</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
+          </div>
+
+          {/* Floating record cluster + composer stay fixed to the pad. */}
+          <div className="pad-fixed">
+            <div className="record-cluster">
+              <button className={`record-btn ${recording ? "recording" : ""}`} onClick={toggleRecord}>
+                {recording ? "■ Stop" : "● Record"}
+              </button>
+              <button
+                className="source-btn"
+                onClick={toggleSource}
+                title={
+                  recording
+                    ? `switch to ${source === "system" ? "microphone" : "system audio"} (new burst, same block)`
+                    : `next recording uses ${source === "system" ? "microphone" : "system audio"}`
+                }
+              >
+                {source === "system" ? "🔊" : "🎙"}
+              </button>
+              {!recording && (
+                <button
+                  className="source-btn"
+                  onClick={() => setForceNewBlock(true)}
+                  title="start a new block on the next recording (instead of continuing the last)"
+                >
+                  + block
+                </button>
+              )}
+            </div>
+            <textarea
+              className="notes-input composer"
+              value={composeDraft}
+              onChange={(e) => onComposeChange(e.target.value)}
+              onKeyDown={onComposeKeyDown}
+              onPaste={onComposePaste}
+              placeholder="write a note — Enter adds it to the timeline · paste images · #tags · links"
+            />
           </div>
         </section>
 
@@ -817,7 +896,79 @@ export default function App() {
   );
 }
 
-// ---- helpers ---------------------------------------------------------------
+// ---- components -------------------------------------------------------------
+
+type TLItem = {
+  type: "seg" | "note";
+  id: string;
+  at: string;
+  text: string;
+  tags: string[];
+  selectionRef?: string | null;
+  image?: string | null;
+};
+
+function NoteView({
+  item,
+  editing,
+  setEditing,
+  onSave,
+}: {
+  item: TLItem;
+  editing: { id: string; draft: string } | null;
+  setEditing: (e: { id: string; draft: string } | null) => void;
+  onSave: (id: string) => void;
+}) {
+  if (item.type === "seg") {
+    return (
+      <div className="entry" id={`entry-${item.id}`} data-at={item.at}>
+        <p className="segment">
+          <span className="segment-stamp">{fmtDT(item.at)}</span>
+          {item.text}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="note-block" id={`entry-${item.id}`} data-at={item.at}>
+      <span className="note-block-stamp">✎ {fmtDT(item.at)}</span>
+      {item.selectionRef && <p className="note-ref">re: “{clip(item.selectionRef, 110)}”</p>}
+      {editing?.id === item.id ? (
+        <textarea
+          className="note-edit"
+          autoFocus
+          value={editing.draft}
+          onChange={(e) => setEditing({ id: item.id, draft: e.target.value })}
+          onBlur={() => onSave(item.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSave(item.id);
+            }
+          }}
+        />
+      ) : (
+        <>
+          {item.image && <img className="note-image" src={item.image} alt="note attachment" />}
+          {item.text && (
+            <p className="note-block-text" onClick={() => setEditing({ id: item.id, draft: item.text })} title="click to edit">
+              <RichText text={item.text.replace(/#[\w-]+/g, "").trim()} />
+            </p>
+          )}
+          {item.tags.length > 0 && (
+            <p className="note-tags">
+              {item.tags.map((t) => (
+                <span key={t} className="tag">#{t}</span>
+              ))}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- helpers -----------------------------------------------------------------
 
 const URL_RE = /(https?:\/\/[^\s]+)/g;
 
@@ -842,97 +993,4 @@ function RichText({ text }: { text: string }) {
 function clip(text: string | null | undefined, max: number): string {
   if (!text) return "";
   return text.length > max ? text.slice(0, max) + "…" : text;
-}
-// ---- review notes: WYSIWYG margin editor with #tag highlighting -----------
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/** Highlight #tags (Obsidian-style) and [[wiki-links]] for the mirror layer. */
-function highlightMarkup(text: string): string {
-  return escapeHtml(text)
-    .replace(/(#[\w-]+)/g, '<mark class="hl-tag">$1</mark>')
-    .replace(/(\[\[[^\]]+\]\])/g, '<mark class="hl-wiki">$1</mark>')
-    .replace(/(https?:\/\/[^\s]+)/g, '<mark class="hl-link">$1</mark>');
-}
-
-function ReviewNotes({ sessionDir, onSaved }: { sessionDir: () => string; onSaved: (tags: string[]) => void }) {
-  const edRef = useRef<HTMLDivElement>(null);
-  const mirrorRef = useRef<HTMLDivElement>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [tagList, setTagList] = useState<string[]>([]);
-  const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
-
-  function sync() {
-    const ed = edRef.current;
-    const mirror = mirrorRef.current;
-    if (!ed || !mirror) return;
-    const text = ed.innerText ?? "";
-    const tags = [...new Set((text.match(/#[\w-]+/g) || []).map((t) => t.slice(1)))];
-    setTagList(tags);
-    mirror.innerHTML = highlightMarkup(text);
-    return { text, tags };
-  }
-
-  function save() {
-    const dir = sessionDir();
-    const data = sync();
-    if (!data || !dir) return;
-    setSaved("saving");
-    backend()
-      .then((b) =>
-        b.invoke("review_notes_save", {
-          sessionDir: dir,
-          text: data.text,
-          tags: data.tags,
-          html: edRef.current?.innerHTML ?? "",
-        }),
-      )
-      .then(() => {
-        setSaved("saved");
-        onSaved(data.tags);
-      })
-      .catch(() => setSaved("idle"));
-  }
-
-  function onInput() {
-    sync();
-    setSaved("idle");
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(save, 1200);
-  }
-
-  function format(cmd: string) {
-    edRef.current?.focus();
-    document.execCommand(cmd);
-    onInput();
-  }
-
-  return (
-    <div className="review-notes">
-      <div className="rn-toolbar">
-        <button onMouseDown={(e) => { e.preventDefault(); format("bold"); }} title="bold"><b>B</b></button>
-        <button onMouseDown={(e) => { e.preventDefault(); format("italic"); }} title="italic"><i>I</i></button>
-        <span className="rn-status">{saved === "saving" ? "saving…" : saved === "saved" ? "saved" : ""}</span>
-        {tagList.length > 0 && (
-          <span className="rn-tags">
-            {tagList.map((t) => <span key={t} className="tag">#{t}</span>)}
-          </span>
-        )}
-      </div>
-      <div className="rn-editor-wrap">
-        <div ref={mirrorRef} className="rn-mirror" aria-hidden />
-        <div
-          ref={edRef}
-          className="rn-editor"
-          contentEditable
-          suppressContentEditableWarning
-          onInput={onInput}
-          onBlur={save}
-          data-placeholder="Review notes — bold/italic, #tags, [[wiki links]], URLs. Select timeline text to flag or chat."
-        />
-      </div>
-    </div>
-  );
 }

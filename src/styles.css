@@ -527,3 +527,9 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
   border: 1px solid #8a7444; border-radius: 4px;
   background: rgba(247,242,229,0.7); color: #5c4d2e;
 }
+
+/* disabled state for paper buttons */
+.paper-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}

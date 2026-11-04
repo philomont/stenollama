@@ -187,6 +187,25 @@ export default function App() {
     };
   }, []);
 
+  // Keyboard shortcuts: Space = toggle system recording, M = toggle mic recording.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      if (e.code === "Space" && !recording) {
+        e.preventDefault();
+        setSource("system");
+        toggleRecord();
+      } else if ((e.key === "m" || e.key === "M") && !recording) {
+        e.preventDefault();
+        setSource("mic");
+        toggleRecord();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [recording]);
+
   // AI margin trigger: typing pause during capture.
   useEffect(() => {
     const iv = setInterval(() => {
@@ -309,20 +328,6 @@ export default function App() {
 
   // Switch the audio feed: stop the current recording and resume as a new
   // burst from the other source — the block continues.
-  async function toggleSource() {
-    const next: RecordSource = source === "system" ? "mic" : "system";
-    if (recording) {
-      try {
-        await backend().then((b) => b.invoke("capture_stop"));
-      } catch {}
-      setSource(next);
-      await new Promise((r) => setTimeout(r, 600));
-      await startRecording(next);
-    } else {
-      setSource(next);
-    }
-  }
-
   // ---- block summaries ------------------------------------------------------
 
   function blockEntries(block: Block): string[] {
@@ -800,47 +805,62 @@ export default function App() {
             </div>
           </div>
 
-          {/* Floating record cluster + composer stay fixed to the pad. */}
+          {/* Recording controls + composer, ON the paper. */}
           <div className="pad-fixed">
-            <div className="record-cluster">
+            <div className="paper-controls">
               <button
-                className={`record-btn ${recording ? "recording" : ""}`}
-                onClick={toggleRecord}
-                title={recording ? "stop recording" : "record system audio"}
-              >
-                <span className="material-symbols-outlined">
-                  {recording ? "stop_circle" : "podcasts"}
-                </span>
-              </button>
-              <button
-                className={`source-btn ${recording ? "dimmed" : ""}`}
-                onClick={toggleSource}
-                disabled={recording}
+                className={`paper-btn ${recording && source === "system" ? "recording" : ""}`}
+                onClick={() => {
+                  if (recording && source === "system") {
+                    toggleRecord();
+                  } else if (!recording) {
+                    setSource("system");
+                    toggleRecord();
+                  }
+                }}
                 title={
-                  recording
-                    ? "switch source (stops current, starts new burst)"
-                    : `next recording uses ${source === "system" ? "microphone" : "system audio"}`
+                  recording && source === "system"
+                    ? "Stop system audio recording (Space)"
+                    : "Record system audio (Space)"
                 }
               >
                 <span className="material-symbols-outlined">
-                  {source === "system" ? "mic" : "speaker"}
+                  {recording && source === "system" ? "stop_circle" : "radio_button_checked"}
+                </span>
+              </button>
+              <button
+                className={`paper-btn ${recording && source === "mic" ? "recording" : ""}`}
+                onClick={() => {
+                  if (recording && source === "mic") {
+                    toggleRecord();
+                  } else if (!recording) {
+                    setSource("mic");
+                    toggleRecord();
+                  }
+                }}
+                title={
+                  recording && source === "mic"
+                    ? "Stop microphone recording (M)"
+                    : "Record microphone (M)"
+                }
+              >
+                <span className="material-symbols-outlined">
+                  {recording && source === "mic" ? "stop_circle" : "mic"}
+                </span>
+              </button>
+              <button
+                className={`paper-btn ${forceNewBlock ? "active" : ""}`}
+                onClick={() => setForceNewBlock(!forceNewBlock)}
+                title="Start a new block on the next recording (instead of continuing the last)"
+              >
+                <span className="material-symbols-outlined">
+                  {forceNewBlock ? "check_circle" : "playlist_add"}
                 </span>
               </button>
               {recording && (
                 <span className="recording-indicator">
                   <span className="material-symbols-outlined pulse">fiber_manual_record</span>
                 </span>
-              )}
-              {!recording && (
-                <button
-                  className={`source-btn ${forceNewBlock ? "active" : ""}`}
-                  onClick={() => setForceNewBlock(!forceNewBlock)}
-                  title="start a new block on the next recording (instead of continuing the last)"
-                >
-                  <span className="material-symbols-outlined">
-                    {forceNewBlock ? "check_circle" : "playlist_add"}
-                  </span>
-                </button>
               )}
             </div>
             <textarea

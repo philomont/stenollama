@@ -450,3 +450,80 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 /* active source button */
 .source-btn.active { border-color: var(--red); color: var(--red); }
+
+/* ======== paper controls ======== */
+
+.paper-controls {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 14px;
+}
+
+.paper-btn {
+  width: 42px; height: 42px; border-radius: 50%;
+  border: 1px solid var(--rule); background: var(--paper);
+  color: #8a7444; font-size: 20px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
+}
+.paper-btn:hover {
+  border-color: #a08c5c; background: var(--paper-dim);
+}
+.paper-btn:active { transform: scale(0.95); }
+.paper-btn .material-symbols-outlined { font-size: 22px; }
+.paper-btn.recording {
+  border-color: var(--red); color: var(--red);
+  background: var(--red-dim);
+}
+.paper-btn.active {
+  border-color: var(--green); color: var(--green);
+}
+
+/* recording indicator: pulsing dot */
+.recording-indicator {
+  display: flex; align-items: center;
+  color: var(--red); font-size: 14px;
+}
+.recording-indicator .material-symbols-outlined { font-size: 16px; }
+.pulse { animation: pulse-dot 1.5s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ======== drawer: steno pad cover with colored tape ======== */
+
+.drawer {
+  background: linear-gradient(180deg, #c4a46e 0%, #b89968 50%, #a89060 100%);
+  border-right: 3px solid #8a7444;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.4);
+}
+.drawer-brand {
+  color: #5c4d2e; border-bottom: 2px solid #8a7444;
+  font-size: 18px; font-family: var(--mono); font-weight: 700;
+  letter-spacing: 0.5px; padding-bottom: 8px;
+}
+.drawer-label {
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 1.5px; color: #7a6844;
+}
+.drawer-list li {
+  padding: 8px 10px 8px 14px; border-radius: 3px;
+  font-size: 14px; cursor: pointer; color: #5c4d2e;
+  display: flex; align-items: center; gap: 10px;
+  border-left: 4px solid transparent;
+}
+.drawer-list li.active {
+  background: rgba(247,242,229,0.9);
+  color: var(--ink);
+  border-left-color: var(--red);
+}
+.drawer-list li.disabled { color: #a09070; cursor: default; font-style: italic; }
+.drawer-list .notebook-color {
+  width: 12px; height: 12px; border-radius: 2px;
+  flex-shrink: 0;
+}
+.drawer-new {
+  border: 1px dashed #8a7444; background: transparent;
+  color: #5c4d2e; font-family: var(--mono); font-size: 12px;
+}
+.status-chip {
+  border: 1px solid #8a7444; border-radius: 4px;
+  background: rgba(247,242,229,0.7); color: #5c4d2e;
+}

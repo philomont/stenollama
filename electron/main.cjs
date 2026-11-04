@@ -242,7 +242,7 @@ function finalizeSession(reason) {
   try {
     fs.writeFileSync(
       path.join(s.sessionDir, "session.yaml"),
-      `schemaVersion: 1\nstartedAt: ${s.startedIso}\nendedAt: ${utcStamp().iso}\naudio:\n  sampleRate: ${SAMPLE_RATE}\n  channels: ${CHANNELS}\n  clock: wall-clock-datetime\n  burstsFile: bursts.jsonl\ncapture:\n  source: system-output-monitor\n  device: ${s.monitor}\ntranscription:\n  engine: ${s.asrEngine === "whisper" ? "whisper.cpp" : "ollama"}\n  model: ${s.asrModel}\nlastBurst:\n  index: ${s.burstIndex}\n  file: ${s.audioFile}\n  durationSec: ${duration.toFixed(3)}\n`,
+      `schemaVersion: 1\nstartedAt: ${s.startedIso}\nendedAt: ${utcStamp().iso}\naudio:\n  sampleRate: ${SAMPLE_RATE}\n  channels: ${CHANNELS}\n  clock: wall-clock-datetime\n  burstsFile: bursts.jsonl\ncapture:\n  source: ${s.source === "mic" ? "microphone" : "system-output-monitor"}\n  device: ${s.monitor}\ntranscription:\n  engine: ${s.asrEngine === "whisper" ? "whisper.cpp" : "ollama"}\n  model: ${s.asrModel}\nlastBurst:\n  index: ${s.burstIndex}\n  file: ${s.audioFile}\n  durationSec: ${duration.toFixed(3)}\n`,
     );
   } catch {}
 
@@ -923,6 +923,44 @@ ipcMain.handle("entry_summary_add", (_e, p) => {
     at: p.at || new Date().toISOString(),
     model: p.model || null,
     text: String(p.text || "").slice(0, 400),
+  }, "summaries.jsonl");
+});
+
+// Block summaries: summarize one recording block, using the previous few
+// blocks' summaries as context. Closes the block (frontend tracks closure).
+ipcMain.handle("ai_block_summary", async (_e, p) => {
+  const model = await resolveLlmModel();
+  const system =
+    "You write the summary card that closes a recording block of a " +
+    "steno-pad timeline. Summarize ONLY the given block in 2-4 terse " +
+    "sentences: what was said, decisions, actions, open questions. You may " +
+    "use the previous block summaries for continuity, but never summarize " +
+    "their content again. No preamble.";
+  const user =
+    (p.previousSummaries?.length
+      ? `Previous block summaries (context only):\n${p.previousSummaries
+          .slice(-3)
+          .map((s, i) => `${i + 1}. ${JSON.stringify(String(s).slice(0, 400))}`)
+          .join("\n")}\n\n`
+      : "") +
+    `Block content (transcript + notes, chronological):\n${JSON.stringify(String(p.content || "").slice(0, 6000))}`;
+  try {
+    return (await llmChat(model, system, user, 120_000)).slice(0, 1200);
+  } catch (err) {
+    mainWindow?.webContents.send("transcript:error", {
+      message: `Block summary failed: ${err.message}`,
+    });
+    return null;
+  }
+});
+
+ipcMain.handle("block_summary_add", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "block-summary",
+    refId: `block-${p.blockIndex}`,
+    at: p.at || new Date().toISOString(),
+    model: p.model || null,
+    text: String(p.text || "").slice(0, 2000),
   }, "summaries.jsonl");
 });
 

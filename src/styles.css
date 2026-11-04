@@ -749,3 +749,202 @@ body { background: var(--desk); color: var(--ink); }
   font-style: italic;
   pointer-events: none;
 }
+
+/* ------------------------------------------------ one-page layout */
+
+.pad-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #d9d0b8 transparent;
+  overscroll-behavior: contain;
+}
+
+.pad-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.pad-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pad-scroll::-webkit-scrollbar-thumb {
+  background: #d9d0b8;
+  border-radius: 3px;
+}
+
+.pad-columns {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  min-height: 100%;
+}
+
+.notes-col {
+  position: relative;
+  display: flex;
+}
+
+.stream {
+  flex: 1;
+  padding: 18px 10px 18px 22px;
+  min-width: 0;
+}
+
+/* Left pips: absolutely positioned at their entries, scrolling with content. */
+.rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 28px;
+  pointer-events: none;
+}
+
+.rail-marker {
+  pointer-events: auto;
+  font-size: 11px;
+  color: #a08c5c;
+  cursor: pointer;
+  user-select: none;
+  right: 6px;
+  width: 20px;
+  text-align: center;
+}
+.rail-marker:hover {
+  color: #26221c;
+}
+
+/* Margin column: annotations positioned at their anchors. */
+.margin-col {
+  position: relative;
+  border-left: 2px solid var(--margin-red);
+  background: linear-gradient(180deg, rgba(208, 68, 46, 0.04), transparent 40px), var(--paper);
+}
+
+.margin-empty {
+  position: absolute;
+  top: 16px;
+  left: 14px;
+  right: 40px;
+  color: var(--ink-dim);
+  font-size: 13.5px;
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.margin-entry {
+  background: rgba(247, 242, 229, 0.95);
+  border: 1px solid #e5dcc0;
+  border-radius: 4px;
+  padding: 8px 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Right pips: colored by annotation type. */
+.pips {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 8px;
+  width: 18px;
+  pointer-events: none;
+}
+
+.pip {
+  position: absolute;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  pointer-events: auto;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+.pip.comment { background: #7c4e9e; } /* live AI comment */
+.pip.chat { background: #1e4e8c; }    /* AI chat */
+.pip.flag { background: #d0442e; }    /* custom flag */
+
+/* Annotation picker: 2-step action selector. */
+.action-select {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.action-select button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid #d9d0b8;
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.action-select button:hover {
+  border-color: var(--margin-red);
+}
+.action-select button.ghost {
+  border-color: transparent;
+  color: #8a7444;
+  margin-left: auto;
+}
+
+/* Fixed bottom: record cluster + composer. */
+.pad-fixed {
+  border-top: 1px solid #d9d0b8;
+  background: var(--paper);
+  position: relative;
+}
+
+.record-cluster {
+  position: absolute;
+  right: 446px;
+  top: -22px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+
+.record-btn {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 8px 18px;
+  border-radius: 16px;
+  border: 1px solid #7c4034;
+  background: #c23b22;
+  color: #fdf6ec;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+}
+.record-btn.recording { background: #8c2b18; }
+
+.source-btn {
+  font: inherit;
+  font-size: 13.5px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  border: 1px solid #c9b98a;
+  background: var(--paper);
+  color: #5c4d2e;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+}
+.source-btn:hover {
+  border-color: #a08c5c;
+}
+
+.composer {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  padding: 14px 22px;
+  font: inherit;
+  font-size: 15px;
+  min-height: 64px;
+  color: var(--ink);
+}
+.composer::placeholder { color: #b3ab97; font-style: italic; }

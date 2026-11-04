@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("steno", {
       case "ai_selection_chat":
       case "ai_entry_summary":
       case "entry_summary_add":
+      case "ai_block_summary":
+      case "block_summary_add":
       case "flag_add":
       case "review_notes_save":
       case "reaction_add":

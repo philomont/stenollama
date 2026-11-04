@@ -870,9 +870,8 @@ export default function App() {
               <span className="block-container" title="~20 second transcription blocks">
                 {Array.from({ length: 5 }).map((_, i) => {
                   const done = Math.min(segments.length, 2);
-                  const active = recording ? Math.min(3, 5 - done) : 0;
-                  const total = done + active;
-                  const state = i < done ? "done" : i < total ? "active" : "empty";
+                  const active = recording ? 1 : 0;
+                  const state = i < done ? "done" : i < done + active ? "active" : "empty";
                   return <span key={i} className={`block-slot ${state}`} />;
                 })}
               </span>

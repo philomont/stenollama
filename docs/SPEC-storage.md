@@ -102,15 +102,54 @@ One user note block per line — notes committed with Enter, injected into the
 stream at the point the user started typing relative to the recording.
 
 ```json
-{"schemaVersion":0,"createdAt":"...","kind":"note","startSec":142.1,"endSec":149.8,"text":"...","selectionRef":null}
+{"schemaVersion":0,"createdAt":"...","id":"note-...","kind":"note","at":"2026-11-04T09:14:32.000Z","startSec":142.1,"endSec":149.8,"text":"...","tags":["audit"],"selectionRef":null,"image":null}
 ```
 
-- `startSec` is the tape position where typing began (`null` when written
-  outside a capture — those render at the end of the stream).
-- `selectionRef` is present when the note was made *about* a selected passage
-  (from the selection box's "Add note" action).
+- `at` is the wall-clock datetime (LOCAL rendering; ISO-8601 UTC on disk) —
+  the timeline is datetime-ordered, not recording-relative, so paused
+  recording gaps are naturally excluded from the timeline.
+- `startSec`/`endSec` remain as within-burst offsets for future audio seek.
+- `tags` parsed from #hashtags; `image` points at an `attachments/` file.
+- Edits append `{kind:"note-edit", id, at, text}` — last write wins per id.
 - The `notes.md` stub remains as the human-readable/export target; the
   sidecar carries the anchors and feeds the stream UI.
+
+### `bursts.jsonl`
+
+One line per recording burst — a session is one timeline, resumed in bursts:
+
+```json
+{"schemaVersion":0,"index":2,"file":"audio-002.wav","startedAt":"..."}
+```
+
+Bursts render as horizontal bars in the stream ("— recording #2 resumed —").
+Notes typed while stopped attach to the last burst's section; if notes are
+typed *before* starting the next recording, the new burst bar is placed above
+them so those notes open the new section (user-directed behavior).
+
+### `flags.jsonl` / `review-notes.md`
+
+The margin is the post-hoc review desk: custom flags on selected passages and
+a WYSIWYG review-notes document per session.
+
+```json
+{"schemaVersion":0,"createdAt":"...","kind":"flag","flag":"verify-date","selection":"...","at":"..."}
+```
+
+`review-notes.md` — the margin editor's content: front-matter `tags` parsed
+from #hashtags, body as typed (bold/italic formatting flattened to markdown
+later; Obsidian-style #tags and [[wiki-links]] inline).
+
+### `summaries.jsonl` / `reactions.jsonl`
+
+Per-entry annotations:
+
+```json
+{"schemaVersion":0,"createdAt":"...","kind":"summary","refId":"seg-000123","at":"...","model":"glm-5.2:cloud","text":"..."}
+{"schemaVersion":0,"createdAt":"...","kind":"reaction","refId":"note-xyz","emoji":"⭐","at":"..."}
+```
+
+Both feed the fast-scroll rail (markers with summary text + datetime).
 
 ### `margin.jsonl`
 

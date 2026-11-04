@@ -226,12 +226,13 @@ body { background: var(--desk); color: var(--ink); }
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 1fr 420px;
   min-height: 0;
 }
 
 /* the red center rule — the heart of a steno pad */
 .margin-col {
+  position: relative;
   border-left: 2px solid var(--margin-red);
   background: var(--paper);
 }
@@ -434,7 +435,11 @@ body { background: var(--desk); color: var(--ink); }
 }
 
 .chat-box {
-  margin: 0 16px 10px;
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  z-index: 10;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
   padding: 10px;
   border: 1px solid var(--rule);
   border-left: 3px solid var(--ai-ink);
@@ -495,4 +500,252 @@ body { background: var(--desk); color: var(--ink); }
 .chat-box-actions button.note {
   background: var(--margin-red);
   border-color: var(--margin-red);
+}
+
+/* ------------------------------------------------ timeline extras */
+
+.stream-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.stream {
+  flex: 1;
+  min-width: 0;
+}
+
+/* burst bar: horizontal divider where a new recording resumes the timeline */
+.burst-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: #8a7444;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+}
+.burst-bar::before,
+.burst-bar::after {
+  content: "";
+  flex: 1;
+  border-top: 2px solid #c9b98a;
+}
+
+/* AI summary appended to the entry */
+.entry-summary {
+  margin: 2px 0 0 0;
+  font-size: 13px;
+  color: var(--ai-ink);
+  line-height: 1.5;
+}
+
+/* inline note editing */
+.note-edit {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  border: 1px dashed var(--margin-red);
+  border-radius: 3px;
+  background: rgba(208, 68, 46, 0.04);
+  padding: 6px 8px;
+  resize: vertical;
+  min-height: 60px;
+  color: var(--ink);
+}
+
+.note-image {
+  max-width: 100%;
+  max-height: 260px;
+  border: 1px solid #d9d0b8;
+  border-radius: 3px;
+  margin: 4px 0;
+}
+
+.note-tags {
+  margin: 4px 0 0 0;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tag {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 11.5px;
+  background: rgba(30, 78, 140, 0.1);
+  color: var(--ai-ink);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.link {
+  color: var(--ai-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+
+/* ------------------------------------------------ fast-scroll rail */
+
+.rail {
+  width: 34px;
+  position: relative;
+  border-right: 1px solid #e5dcc0;
+  margin-left: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 0;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar { display: none; }
+
+.rail-marker {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  color: #8a7444;
+  border-radius: 3px;
+  user-select: none;
+}
+.rail-marker:hover {
+  background: rgba(163, 84, 63, 0.15);
+  color: var(--ink);
+}
+.rail-marker.burst {
+  color: #b09040;
+}
+.rail-marker.seg {
+  color: var(--ai-ink);
+}
+
+/* ------------------------------------------------ flags */
+
+.flag-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.flag-chip {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  color: #7c4034;
+  background: rgba(208, 68, 46, 0.12);
+  border: 1px solid rgba(208, 68, 46, 0.35);
+  border-radius: 10px;
+  padding: 2px 8px;
+  cursor: default;
+}
+
+.flag-row input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #d9d0b8;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.chat-box-actions button.flag {
+  background: var(--margin-red);
+  border-color: var(--margin-red);
+}
+
+/* ------------------------------------------------ WYSIWYG review notes */
+
+.review-notes {
+  flex: none;
+  border-top: 1px dashed #d0c7ad;
+  background: linear-gradient(180deg, rgba(208, 68, 46, 0.04), transparent 30px);
+}
+
+.rn-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px 2px;
+}
+.rn-toolbar button {
+  border: 1px solid #c9ba93;
+  background: transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 13px;
+  width: 26px;
+  height: 22px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.rn-toolbar button:hover {
+  background: rgba(163, 84, 63, 0.12);
+}
+.rn-status {
+  font-size: 11px;
+  color: #8a7444;
+  font-style: italic;
+  min-width: 44px;
+}
+.rn-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rn-editor-wrap {
+  position: relative;
+  padding: 4px 16px 12px;
+}
+.rn-mirror,
+.rn-editor {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 10px;
+  min-height: 120px;
+  border-radius: 3px;
+}
+.rn-mirror {
+  position: absolute;
+  inset: 4px 16px 12px;
+  color: transparent;
+  pointer-events: none;
+  background: rgba(30, 78, 140, 0.03);
+  border: 1px solid #e5dcc0;
+}
+.rn-mirror mark {
+  color: transparent;
+  border-radius: 3px;
+}
+.rn-mirror .hl-tag {
+  background: rgba(30, 78, 140, 0.16);
+}
+.rn-mirror .hl-wiki {
+  background: rgba(163, 84, 63, 0.18);
+}
+.rn-mirror .hl-link {
+  background: rgba(46, 125, 79, 0.16);
+}
+.rn-editor {
+  position: relative;
+  outline: none;
+  border: 1px solid transparent;
+  color: var(--ink);
+}
+.rn-editor:focus {
+  border-color: #d9d0b8;
+}
+.rn-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #b3ab97;
+  font-style: italic;
+  pointer-events: none;
 }

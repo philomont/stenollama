@@ -242,7 +242,7 @@ function finalizeSession(reason) {
   try {
     fs.writeFileSync(
       path.join(s.sessionDir, "session.yaml"),
-      `schemaVersion: 0\nstartedAt: ${s.startedIso}\nendedAt: ${utcStamp().iso}\naudio:\n  file: audio.wav\n  sampleRate: ${SAMPLE_RATE}\n  channels: ${CHANNELS}\n  durationSec: ${duration.toFixed(3)}\n  clock: sample-count\ncapture:\n  source: system-output-monitor\n  device: ${s.monitor}\ntranscription:\n  engine: ollama-gemma4\n  model: gemma4:e4b\n`,
+      `schemaVersion: 1\nstartedAt: ${s.startedIso}\nendedAt: ${utcStamp().iso}\naudio:\n  sampleRate: ${SAMPLE_RATE}\n  channels: ${CHANNELS}\n  clock: wall-clock-datetime\n  burstsFile: bursts.jsonl\ncapture:\n  source: system-output-monitor\n  device: ${s.monitor}\ntranscription:\n  engine: ${s.asrEngine === "whisper" ? "whisper.cpp" : "ollama"}\n  model: ${s.asrModel}\nlastBurst:\n  index: ${s.burstIndex}\n  file: ${s.audioFile}\n  durationSec: ${duration.toFixed(3)}\n`,
     );
   } catch {}
 
@@ -253,32 +253,71 @@ function finalizeSession(reason) {
   });
 }
 
-async function captureStart(notebook) {
+async function captureStart(notebook, opts = {}) {
   if (active) throw new Error("a capture session is already active");
 
   const monitor = await defaultSinkMonitor();
   const engine = await resolveAsrEngine();
   const { name, iso } = utcStamp();
-  const sessionDir = path.join(notebooksRoot(), notebook, "sessions", name);
-  fs.mkdirSync(sessionDir, { recursive: true });
 
-  // Session files per SPEC-storage v0.1.
-  fs.writeFileSync(path.join(sessionDir, "transcript.jsonl"), "");
-  fs.writeFileSync(path.join(sessionDir, "highlights.jsonl"), "");
-  fs.writeFileSync(
-    path.join(sessionDir, "notes.md"),
-    `---\nschemaVersion: 0\nanchors: []\nhighlights: []\ntags: []\n---\n\n## Session ${name}\n`,
-  );
+  // One timeline per notebook: a new recording resumes the latest session as
+  // a new burst (horizontal bar). Fresh sessions only via opts.fresh.
+  const nbSessions = path.join(notebooksRoot(), notebook, "sessions");
+  let sessionDir = null;
+  let resumed = false;
+  if (!opts.fresh) {
+    try {
+      const dirs = fs.readdirSync(nbSessions).filter((d) => /^\d{4}-/.test(d)).sort();
+      const last = dirs[dirs.length - 1];
+      if (last) {
+        const candidate = path.join(nbSessions, last);
+        if (fs.existsSync(path.join(candidate, "session.yaml"))) {
+          sessionDir = candidate;
+          resumed = true;
+        }
+      }
+    } catch {}
+  }
+  if (!sessionDir) {
+    sessionDir = path.join(nbSessions, name);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    // Session files per SPEC-storage.
+    fs.writeFileSync(path.join(sessionDir, "transcript.jsonl"), "");
+    fs.writeFileSync(path.join(sessionDir, "highlights.jsonl"), "");
+    fs.writeFileSync(
+      path.join(sessionDir, "notes.md"),
+      `---\nschemaVersion: 0\nanchors: []\nhighlights: []\ntags: []\n---\n\n## Session ${name}\n`,
+    );
+  }
 
-  const wavPath = path.join(sessionDir, "audio.wav");
+  // Burst audio: audio-001.wav, audio-002.wav, ...
+  let burstIndex = 1;
+  while (fs.existsSync(path.join(sessionDir, `audio-${String(burstIndex).padStart(3, "0")}.wav`))) {
+    burstIndex += 1;
+  }
+  const audioFile = `audio-${String(burstIndex).padStart(3, "0")}.wav`;
+  const wavPath = path.join(sessionDir, audioFile);
   const fd = fs.openSync(wavPath, "w");
   const readFd = fs.openSync(wavPath, "r");
   fs.writeSync(fd, wavHeader(0));
+
+  // Wall-clock start of this burst — every segment gets a datetime stamp.
+  const burstStartMs = Date.now();
+
+  try {
+    fs.appendFileSync(
+      path.join(sessionDir, "bursts.jsonl"),
+      JSON.stringify({ schemaVersion: 0, index: burstIndex, file: audioFile, startedAt: iso }) + "\n",
+    );
+  } catch {}
 
   let finished = false;
   const s = {
     sessionDir,
     startedIso: iso,
+    burstIndex,
+    audioFile,
+    burstStartMs,
     monitor,
     fd,
     ffmpeg: null,
@@ -377,7 +416,9 @@ async function captureStart(notebook) {
     }
   });
 
-  return sessionDir;
+  active = s;
+
+  return { sessionDir, burstIndex, resumed, at: iso };
 }
 
 // ----------------------------------------------------------------- asr
@@ -438,7 +479,12 @@ function whisperTranscribe(s, wav) {
       try {
         fs.unlinkSync(tmp);
       } catch {}
-      if (code === 0) resolve(out.trim());
+      if (code === 0) {
+        const t = out.trim();
+        // whisper hallucinates bracketed placeholders on near-silent audio
+        if (!t || /^(\[[\w ]*\]|[.,!?\s]*)$/.test(t)) resolve("");
+        else resolve(t);
+      }
       else reject(new Error(`whisper exited ${code}: ${err.slice(0, 160)}`));
     });
   });
@@ -502,11 +548,15 @@ async function transcribeSlice(s, startSample, endSample) {
     }
     if (!text) return;
 
+    // Wall-clock stamp for the timeline (datetime, not recording-relative).
+    const at = new Date(s.burstStartMs + (startSample / SAMPLE_RATE) * 1000).toISOString();
     const seg = {
       schemaVersion: 0,
       id: `seg-${String(++s.asrSegmentNo).padStart(6, "0")}`,
+      at,
       start: startSample / SAMPLE_RATE,
       end: endSample / SAMPLE_RATE,
+      burst: s.burstIndex,
       text,
       confidence: null,
     };
@@ -722,7 +772,7 @@ function appendMargin(sessionDir, entry, file = "margin.jsonl") {
 
 ipcMain.handle("ollama_status", () => probeOllama());
 
-ipcMain.handle("capture_start", (_e, notebook) => captureStart(notebook || "Inbox"));
+ipcMain.handle("capture_start", (_e, p) => captureStart(p?.notebook || "Inbox", { fresh: !!p?.fresh }));
 
 ipcMain.handle("capture_stop", () => {
   if (!active) throw new Error("no active capture session");
@@ -768,6 +818,7 @@ ipcMain.handle("ai_margin_comment", async (_e, p) => {
   return appendMargin(p.sessionDir, {
     kind: "comment",
     author: "ai",
+    at: p.at || new Date().toISOString(),
     atSec: p.atSec ?? null,
     noteContext: (p.noteBlock || "").slice(0, 300) || null,
     model,
@@ -820,14 +871,101 @@ ipcMain.handle("ai_selection_chat", async (_e, p) => {
 
 // Persist a user note block to the session's notes.jsonl (SPEC v0.3).
 ipcMain.handle("note_add", (_e, p) => {
-  const start = typeof p.startSec === "number" ? p.startSec : null;
   return appendMargin(p.sessionDir, {
     kind: "note",
-    startSec: start,
+    id: `note-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`,
+    at: p.at || new Date().toISOString(),
+    startSec: typeof p.startSec === "number" ? p.startSec : null,
     endSec: typeof p.endSec === "number" ? p.endSec : null,
     text: String(p.text || "").slice(0, 4000),
+    tags: Array.isArray(p.tags) ? p.tags.slice(0, 12).map(String) : [],
     selectionRef: p.selectionRef ? String(p.selectionRef).slice(0, 1500) : null,
+    image: p.image ? String(p.image).slice(0, 500) : null,
   }, "notes.jsonl");
+});
+
+// Edit an existing note (append-only edit history; last write wins per id).
+ipcMain.handle("note_edit", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "note-edit",
+    id: String(p.id || ""),
+    at: p.at || new Date().toISOString(),
+    text: String(p.text || "").slice(0, 4000),
+  }, "notes.jsonl");
+});
+
+// Per-entry AI summary, appended to the end of the entry in the stream.
+ipcMain.handle("ai_entry_summary", async (_e, p) => {
+  const model = await resolveLlmModel();
+  const system =
+    "You summarize one entry of a steno-pad timeline (a transcript segment " +
+    "or a user note). Reply with a single terse line, max 12 words, no " +
+    "preamble, that captures the essence so it can be found later in a " +
+    "scroll marker.";
+  const user =
+    `Entry: ${JSON.stringify(String(p.text || "").slice(0, 1000))}\n` +
+    `Neighbors for context: ${JSON.stringify((p.neighbors || []).slice(0, 3).join(" | ").slice(0, 800))}`;
+  try {
+    const summary = (await llmChat(model, system, user)).split("\n")[0].slice(0, 200);
+    return summary || null;
+  } catch (err) {
+    mainWindow?.webContents.send("transcript:error", {
+      message: `Summary failed: ${err.message}`,
+    });
+    return null;
+  }
+});
+
+ipcMain.handle("entry_summary_add", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "summary",
+    refId: String(p.refId || ""),
+    at: p.at || new Date().toISOString(),
+    model: p.model || null,
+    text: String(p.text || "").slice(0, 400),
+  }, "summaries.jsonl");
+});
+
+// Custom flags on selected passages — margin review annotations.
+ipcMain.handle("flag_add", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "flag",
+    flag: String(p.flag || "").slice(0, 60),
+    selection: String(p.selection || "").slice(0, 1500),
+    at: p.at || new Date().toISOString(),
+  }, "flags.jsonl");
+});
+
+// WYSIWYG review notes (margin editor) — markdown-ish persistence per session.
+ipcMain.handle("review_notes_save", (_e, p) => {
+  if (!p.sessionDir) throw new Error("no session");
+  const tags = Array.isArray(p.tags) ? p.tags.slice(0, 30).map((t) => `#${String(t).slice(0, 40)}`) : [];
+  const body = `---\ntags: [${tags.join(", ")}]\n---\n\n${String(p.text || "").slice(0, 20000)}\n`;
+  fs.writeFileSync(path.join(p.sessionDir, "review-notes.md"), body);
+  return { ok: true, tags };
+});
+
+// Reactions (⭐ ❓ ✅ 🚩 …) on entries — fast-scroll markers of their own.
+ipcMain.handle("reaction_add", (_e, p) => {
+  return appendMargin(p.sessionDir, {
+    kind: "reaction",
+    refId: String(p.refId || ""),
+    emoji: String(p.emoji || "").slice(0, 8),
+    at: p.at || new Date().toISOString(),
+  }, "reactions.jsonl");
+});
+
+// Image attachments (pasted into the composer) — stored per session.
+ipcMain.handle("attachment_add", (_e, p) => {
+  const sessionDir = p.sessionDir || "";
+  if (!sessionDir) throw new Error("no session");
+  const dir = path.join(sessionDir, "attachments");
+  fs.mkdirSync(dir, { recursive: true });
+  const m = /^data:image\/(png|jpeg|jpg|gif|webp);base64,/.exec(p.dataUrl || "");
+  if (!m) throw new Error("unsupported image");
+  const file = `img-${Date.now().toString(36)}.${m[1] === "jpeg" ? "jpg" : m[1]}`;
+  fs.writeFileSync(path.join(dir, file), Buffer.from((p.dataUrl || "").split(",")[1], "base64"));
+  return path.join("attachments", file);
 });
 
 // Persist a human margin comment.

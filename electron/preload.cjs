@@ -19,8 +19,15 @@ contextBridge.exposeInMainWorld("steno", {
         return ipcRenderer.invoke("capture_elapsed");
       case "ai_margin_comment":
       case "ai_selection_chat":
+      case "ai_entry_summary":
+      case "entry_summary_add":
+      case "flag_add":
+      case "review_notes_save":
+      case "reaction_add":
+      case "attachment_add":
       case "margin_add":
       case "note_add":
+      case "note_edit":
         return ipcRenderer.invoke(channel, payload);
       default:
         return Promise.reject(new Error(`unknown steno channel: ${channel}`));

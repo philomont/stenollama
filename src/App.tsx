@@ -803,27 +803,43 @@ export default function App() {
           {/* Floating record cluster + composer stay fixed to the pad. */}
           <div className="pad-fixed">
             <div className="record-cluster">
-              <button className={`record-btn ${recording ? "recording" : ""}`} onClick={toggleRecord}>
-                {recording ? "⏹" : "⏺"}
+              <button
+                className={`record-btn ${recording ? "recording" : ""}`}
+                onClick={toggleRecord}
+                title={recording ? "stop recording" : "record system audio"}
+              >
+                <span className="material-symbols-outlined">
+                  {recording ? "stop_circle" : "podcasts"}
+                </span>
               </button>
               <button
-                className="source-btn"
+                className={`source-btn ${recording ? "dimmed" : ""}`}
                 onClick={toggleSource}
+                disabled={recording}
                 title={
                   recording
-                    ? `switch to ${source === "system" ? "microphone" : "system audio"} (new burst, same block)`
+                    ? "switch source (stops current, starts new burst)"
                     : `next recording uses ${source === "system" ? "microphone" : "system audio"}`
                 }
               >
-                {source === "system" ? "🔊" : "🎙"}
+                <span className="material-symbols-outlined">
+                  {source === "system" ? "mic" : "speaker"}
+                </span>
               </button>
+              {recording && (
+                <span className="recording-indicator">
+                  <span className="material-symbols-outlined pulse">fiber_manual_record</span>
+                </span>
+              )}
               {!recording && (
                 <button
-                  className="source-btn"
-                  onClick={() => setForceNewBlock(true)}
+                  className={`source-btn ${forceNewBlock ? "active" : ""}`}
+                  onClick={() => setForceNewBlock(!forceNewBlock)}
                   title="start a new block on the next recording (instead of continuing the last)"
                 >
-                  + block
+                  <span className="material-symbols-outlined">
+                    {forceNewBlock ? "check_circle" : "playlist_add"}
+                  </span>
                 </button>
               )}
             </div>

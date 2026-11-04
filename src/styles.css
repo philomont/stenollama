@@ -562,9 +562,17 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 .block-slot.done {
   background: #2e7d4f;
 }
+.block-slot.processing {
+  background: #e67e22;
+  animation: block-processing 2s ease-in-out infinite;
+}
 .block-slot.active {
   background: #c0392b;
   animation: block-fill 20s ease-in-out infinite;
+}
+@keyframes block-processing {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 .block-slot.empty {
   background: transparent;

@@ -491,6 +491,10 @@ function whisperTranscribe(s, wav) {
 }
 
 async function transcribeSlice(s, startSample, endSample) {
+  // Tell the UI this block is being transcribed (amber state)
+  mainWindow?.webContents.send("transcript:processing", {
+    blockIndex: Math.floor(startSample / (SAMPLE_RATE * 20)),
+  });
   const wav = extractWavSlice(s, startSample, endSample);
   try {
     let text;

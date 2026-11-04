@@ -104,6 +104,7 @@ export default function App() {
 
   // The timeline.
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [processing, setProcessing] = useState<number[]>([]);
   const [noteBlocks, setNoteBlocks] = useState<NoteBlock[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [margin, setMargin] = useState<MarginEntry[]>([]);
@@ -171,6 +172,10 @@ export default function App() {
         }),
         b.listen<TranscriptSegment>("transcript:segment", (seg) => {
           setSegments((prev) => [...prev, seg]);
+          setProcessing((prev) => prev.slice(1));
+        }),
+        b.listen<{ blockIndex: number }>("transcript:processing", (p) => {
+          setProcessing((prev) => [...prev, p.blockIndex]);
         }),
         b.listen<{ message: string }>("transcript:error", (e) => setAsrError(e.message)),
         b.listen<EngineInfo>("transcript:engine", (info) => setEngine(info)),
@@ -864,8 +869,13 @@ export default function App() {
               <span className="block-container" title="~20 second transcription blocks">
                 {Array.from({ length: 5 }).map((_, i) => {
                   const done = Math.min(segments.length, 2);
-                  const active = recording ? 1 : 0;
-                  const state = i < done ? "done" : i < done + active ? "active" : "empty";
+                  const proc = Math.min(processing.length, 5 - done);
+                  const rec = recording ? 1 : 0;
+                  const state =
+                    i < done ? "done" :
+                    i < done + proc ? "processing" :
+                    i < done + proc + rec ? "active" :
+                    "empty";
                   return <span key={i} className={`block-slot ${state}`} />;
                 })}
               </span>

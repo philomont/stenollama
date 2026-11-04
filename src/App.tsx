@@ -867,14 +867,14 @@ export default function App() {
                   <span className="recording-label">REC</span>
                 </span>
               )}
-              <span className="block-counter" title="~20 second blocks transcribed">
-                {segments.length > 0 ? (
-                  <span className="block-pips">
-                    {Array.from({ length: Math.min(segments.length, 12) }).map((_, i) => (
-                      <span key={i} className={`block-pip ${i < segments.length - 1 ? "done" : "active"}`} />
-                    ))}
-                  </span>
-                ) : null}
+              <span className="block-container" title="~20 second transcription blocks">
+                {Array.from({ length: 5 }).map((_, i) => {
+                  const done = Math.min(segments.length, 2);
+                  const active = recording ? Math.min(3, 5 - done) : 0;
+                  const total = done + active;
+                  const state = i < done ? "done" : i < total ? "active" : "empty";
+                  return <span key={i} className={`block-slot ${state}`} />;
+                })}
               </span>
               <span className="level-meter-inline" aria-hidden>
                 <span className="level-bar-inline" style={{ width: `${levelPct}%` }} />

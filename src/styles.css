@@ -555,16 +555,25 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 /* ======== block counter (showing ~20s blocks being transcribed) ======== */
 
-.block-pips {
-  display: flex; gap: 2px; margin-left: 8px;
+.block-container {
+  display: flex; gap: 3px; margin-left: 10px; align-items: center;
 }
-.block-pip {
-  width: 8px; height: 8px; border-radius: 2px;
-  background: #d0c7ad;
+.block-slot {
+  width: 10px; height: 10px; border-radius: 2px;
+  transition: all 0.3s ease;
 }
-.block-pip.done { background: #2e7d4f; }
-.block-pip.active { background: #c0392b; animation: block-pulse 1.5s ease-in-out infinite; }
-@keyframes block-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.block-slot.done {
+  background: #2e7d4f;
+}
+.block-slot.active {
+  background: #c0392b;
+  animation: block-pulse 1.5s ease-in-out infinite;
+}
+.block-slot.empty {
+  background: transparent;
+  border: 1px solid #d0c7ad;
+}
+@keyframes block-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 /* ======== inline level meter ======== */
 

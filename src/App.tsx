@@ -810,6 +810,7 @@ export default function App() {
             <div className="paper-controls">
               <button
                 className={`paper-btn ${recording && source === "system" ? "recording" : ""}`}
+                disabled={recording && source === "mic"}
                 onClick={() => {
                   if (recording && source === "system") {
                     toggleRecord();
@@ -830,6 +831,7 @@ export default function App() {
               </button>
               <button
                 className={`paper-btn ${recording && source === "mic" ? "recording" : ""}`}
+                disabled={recording && source === "system"}
                 onClick={() => {
                   if (recording && source === "mic") {
                     toggleRecord();
@@ -850,6 +852,7 @@ export default function App() {
               </button>
               <button
                 className={`paper-btn ${forceNewBlock ? "active" : ""}`}
+                disabled={recording}
                 onClick={() => setForceNewBlock(!forceNewBlock)}
                 title="Start a new block on the next recording (instead of continuing the last)"
               >

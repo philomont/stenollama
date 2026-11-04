@@ -37,9 +37,9 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
   position: fixed; z-index: 30;
   left: 0; top: 0; bottom: 0;
   width: 230px;
-  background: linear-gradient(180deg, #e8dcc0, #d9c9a4);
-  border-right: 1px solid #b9a87f;
-  box-shadow: 6px 0 18px rgba(0,0,0,0.35);
+  background: #d4c4a0;
+  border-right: 3px solid #a89468;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.3);
   padding: 18px 14px;
   display: flex; flex-direction: column; gap: 14px;
   transform: translateX(-100%);

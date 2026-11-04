@@ -336,14 +336,6 @@ body { background: var(--desk); color: var(--ink); }
   min-height: 0;
 }
 
-.margin-entry {
-  margin-bottom: 10px;
-  padding: 2px 8px 6px;
-  border-left: 3px solid transparent;
-}
-.margin-entry.ai { border-left-color: var(--ai-ink); }
-.margin-entry.human { border-left-color: var(--margin-red); }
-
 .margin-meta {
   display: flex;
   align-items: baseline;
@@ -832,11 +824,11 @@ body { background: var(--desk); color: var(--ink); }
 }
 
 .margin-entry {
-  background: rgba(247, 242, 229, 0.95);
-  border: 1px solid #e5dcc0;
-  border-radius: 4px;
-  padding: 8px 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 10px 14px;
+  margin: 0 12px 10px;
+  border-left: 3px solid #8a7444;
+  background: linear-gradient(90deg, rgba(138, 116, 68, 0.03), transparent 8px);
+  border-radius: 0 4px 4px 0;
 }
 
 /* Right pips: colored by annotation type. */
@@ -948,3 +940,55 @@ body { background: var(--desk); color: var(--ink); }
   color: var(--ink);
 }
 .composer::placeholder { color: #b3ab97; font-style: italic; }
+
+/* Margin entry types: left border color links back to annotation type */
+.margin-entry.kind-comment { border-left-color: #7c4e9e; }
+.margin-entry.kind-chat { border-left-color: #1e4e8c; }
+.margin-entry.kind-flag { border-left-color: #d0442e; }
+.margin-entry.kind-ai { border-left-color: #7c4e9e; }
+.margin-entry.kind-human { border-left-color: #2e7d4f; }
+
+/* Simple Material-Symbols-style record button */
+.record-btn {
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #7c4034;
+  background: #c23b22;
+  color: #fdf6ec;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+}
+.record-btn.recording { background: #8c2b18; }
+.record-btn:active { transform: scale(0.95); }
+
+.source-btn {
+  font: inherit;
+  font-size: 20px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid #c9b98a;
+  background: var(--paper);
+  color: #5c4d2e;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.source-btn:active { transform: scale(0.95); }
+
+/* Right column: margin feed stacks normally */
+.margin-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding-top: 10px;
+}

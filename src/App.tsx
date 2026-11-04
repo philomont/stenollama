@@ -126,7 +126,6 @@ export default function App() {
   const [forceNewBlock, setForceNewBlock] = useState(false);
 
   // Layout: annotations positioned at their anchors inside the one scroller.
-  const [marginTops, setMarginTops] = useState<Record<string, number>>({});
   const [railTops, setRailTops] = useState<Record<string, number>>({});
 
   // Refs.
@@ -545,8 +544,6 @@ export default function App() {
     const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
     const topOf = (el: HTMLElement | null) =>
       el ? el.getBoundingClientRect().top - scrollerTop : null;
-
-    // Left rail pips: at their entry's position.
     const railT: Record<string, number> = {};
     tl.forEach((item) => {
       const el = document.getElementById(`entry-${item.id}`);
@@ -559,39 +556,7 @@ export default function App() {
       if (top !== null) railT[block.id] = top;
     });
     setRailTops(railT);
-
-    // Margin annotations: at their anchor (the entry at/before their time),
-    // stacked so they never overlap.
-    const anchorable = Array.from(scroller.querySelectorAll<HTMLElement>("[data-at]")).sort(
-      (a, b) => (a.dataset.at! < b.dataset.at! ? -1 : 1),
-    );
-    const anchorTopFor = (m: MarginEntry): number => {
-      if (m.refId) {
-        const el = document.getElementById(`entry-${m.refId}`);
-        const top = topOf(el);
-        if (top !== null) return top;
-      }
-      let top = 16;
-      for (const el of anchorable) {
-        if (el.dataset.at! <= m.at) {
-          const t = topOf(el);
-          if (t !== null && t >= 0) top = Math.max(top, t);
-        }
-      }
-      return top;
-    };
-    const sorted = [...margin].sort((a, b) => anchorTopFor(a) - anchorTopFor(b));
-    const tops: Record<string, number> = {};
-    let prevBottom = 0;
-    sorted.forEach((m) => {
-      const el = scroller.querySelector<HTMLElement>(`[data-margin-id="${m.id}"]`);
-      const h = el?.offsetHeight ?? 64;
-      const top = Math.max(anchorTopFor(m), prevBottom + 10);
-      tops[m.id] = top;
-      prevBottom = top + h;
-    });
-    setMarginTops(tops);
-  }, [tl, blocks, margin, pendingSelection]);
+  }, [tl, blocks]);
 
   const statusOk = (ollama?.local_online || ollama?.cloud_online) ?? false;
   const levelPct = Math.max(0, Math.min(100, ((level + 60) / 60) * 100));
@@ -734,7 +699,6 @@ export default function App() {
                     data-margin-id={m.id}
                     data-at={m.at}
                     className={`margin-entry kind-${m.kind}`}
-                    style={{ position: "absolute", top: marginTops[m.id] ?? 0, left: 12, right: 44 }}
                   >
                     {m.kind === "chat" ? (
                       <>
@@ -765,25 +729,9 @@ export default function App() {
                     )}
                   </div>
                 ))}
-                {aiThinking && <p className="ai-thinking" style={{ position: "absolute", top: 12, left: 12 }}>AI is writing…</p>}
+                {aiThinking && <p className="ai-thinking">AI is writing…</p>}
 
-                {/* Right pips: colored by annotation type. */}
-                <div className="pips" aria-label="annotation markers">
-                  {margin.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`pip ${m.kind}`}
-                      style={{ position: "absolute", top: (marginTops[m.id] ?? 0) + 6 }}
-                      title={`${fmtDTLong(m.at)} — ${m.kind === "comment" ? clip(m.text, 80) : m.kind === "chat" ? clip(m.question, 80) : "⚑ " + m.text}`}
-                      onClick={() =>
-                        scrollRef.current?.scrollTo({
-                          top: Math.max(0, (marginTops[m.id] ?? 0) - 120),
-                          behavior: "smooth",
-                        })
-                      }
-                    />
-                  ))}
-                </div>
+
 
                 {/* Selection → 2-step annotation picker. */}
                 {pendingSelection && (
@@ -856,7 +804,7 @@ export default function App() {
           <div className="pad-fixed">
             <div className="record-cluster">
               <button className={`record-btn ${recording ? "recording" : ""}`} onClick={toggleRecord}>
-                {recording ? "■ Stop" : "● Record"}
+                {recording ? "⏹" : "⏺"}
               </button>
               <button
                 className="source-btn"

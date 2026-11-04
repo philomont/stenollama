@@ -584,7 +584,7 @@ export default function App() {
 
   return (
     <div className="desk">
-      <aside className={`drawer ${drawerOpen ? "open" : ""}`}>
+      <aside className={`drawer ${drawerOpen ? "open" : ""}`} onMouseLeave={() => setDrawerOpen(false)}>
         <h1 className="drawer-brand">Stenollama</h1>
         <p className="drawer-label">Notebooks</p>
         <ul className="drawer-list">
@@ -613,18 +613,19 @@ export default function App() {
         </div>
       </aside>
 
-      <div className={`drawer-scrim ${drawerOpen ? "show" : ""}`} onClick={() => setDrawerOpen(false)} />
+      <div
+        className={`drawer-scrim ${drawerOpen ? "show" : ""}`}
+        onClick={() => setDrawerOpen(false)}
+      />
+      <div
+        className="drawer-hover-zone"
+        onMouseEnter={() => setDrawerOpen(true)}
+      />
 
       <main className="desk-main">
-        <header className="pad-header">
-          <button className="icon-btn" onClick={() => setDrawerOpen(!drawerOpen)}>☰</button>
-          <span className="header-title">{recording ? "on the record" : "timeline"}</span>
-          <div className="level-meter" aria-hidden>
-            <div className="level-bar" style={{ width: `${levelPct}%` }} />
-          </div>
-        </header>
 
         <section className="pad">
+          <div className="red-line" />
           {/* One page: both columns scroll together in a single scroller. */}
           <div className="pad-scroll" ref={scrollRef}>
             <div className="pad-columns">
@@ -863,8 +864,21 @@ export default function App() {
               {recording && (
                 <span className="recording-indicator">
                   <span className="material-symbols-outlined pulse">fiber_manual_record</span>
+                  <span className="recording-label">REC</span>
                 </span>
               )}
+              <span className="block-counter" title="~20 second blocks transcribed">
+                {segments.length > 0 ? (
+                  <span className="block-pips">
+                    {Array.from({ length: Math.min(segments.length, 12) }).map((_, i) => (
+                      <span key={i} className={`block-pip ${i < segments.length - 1 ? "done" : "active"}`} />
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+              <span className="level-meter-inline" aria-hidden>
+                <span className="level-bar-inline" style={{ width: `${levelPct}%` }} />
+              </span>
             </div>
             <textarea
               className="notes-input composer"

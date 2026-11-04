@@ -203,7 +203,6 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 .margin-col {
   position: relative;
-  border-left: 2px solid var(--red);
   background: var(--paper);
   display: flex; flex-direction: column;
   padding-top: 10px;
@@ -489,11 +488,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 /* ======== drawer: steno pad cover with colored tape ======== */
 
-.drawer {
-  background: linear-gradient(180deg, #c4a46e 0%, #b89968 50%, #a89060 100%);
-  border-right: 3px solid #8a7444;
-  box-shadow: 4px 0 12px rgba(0,0,0,0.4);
-}
+
 .drawer-brand {
   color: #5c4d2e; border-bottom: 2px solid #8a7444;
   font-size: 18px; font-family: var(--mono); font-weight: 700;
@@ -532,4 +527,53 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 .paper-btn:disabled {
   opacity: 0.3;
   pointer-events: none;
+}
+
+/* ======== drawer hover zone (auto-opens on mouse over left edge) ======== */
+
+.drawer-hover-zone {
+  position: fixed; left: 0; top: 0; bottom: 0;
+  width: 24px; z-index: 29; pointer-events: auto;
+}
+
+/* ======== full-height red vertical line ======== */
+
+.red-line {
+  position: absolute; top: 0; bottom: 0;
+  left: calc(100% - 420px);
+  width: 2px; background: var(--red);
+  pointer-events: none; z-index: 1;
+}
+
+/* ======== recording indicator ======== */
+
+.recording-label {
+  font-family: var(--mono); font-size: 10px;
+  font-weight: 700; color: var(--red);
+  letter-spacing: 1px; margin-left: 4px;
+}
+
+/* ======== block counter (showing ~20s blocks being transcribed) ======== */
+
+.block-pips {
+  display: flex; gap: 2px; margin-left: 8px;
+}
+.block-pip {
+  width: 8px; height: 8px; border-radius: 2px;
+  background: #d0c7ad;
+}
+.block-pip.done { background: #2e7d4f; }
+.block-pip.active { background: #c0392b; animation: block-pulse 1.5s ease-in-out infinite; }
+@keyframes block-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ======== inline level meter ======== */
+
+.level-meter-inline {
+  display: inline-block; width: 60px; height: 4px;
+  background: #d0c7ad; border-radius: 2px;
+  margin-left: 8px; overflow: hidden; vertical-align: middle;
+}
+.level-bar-inline {
+  display: block; height: 100%;
+  background: #2e7d4f; transition: width 0.2s linear;
 }

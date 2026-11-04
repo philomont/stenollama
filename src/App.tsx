@@ -861,12 +861,6 @@ export default function App() {
                   {forceNewBlock ? "check_circle" : "playlist_add"}
                 </span>
               </button>
-              {recording && (
-                <span className="recording-indicator">
-                  <span className="material-symbols-outlined pulse">fiber_manual_record</span>
-                  <span className="recording-label">REC</span>
-                </span>
-              )}
               <span className="block-container" title="~20 second transcription blocks">
                 {Array.from({ length: 5 }).map((_, i) => {
                   const done = Math.min(segments.length, 2);

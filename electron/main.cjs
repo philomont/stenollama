@@ -905,7 +905,6 @@ ipcMain.handle("capture_elapsed", () => {
 // block the user was typing. Only fired by user typing activity (renderer
 // debounces); the model may decline ((none)).
 ipcMain.handle("ai_margin_comment", async (_e, p) => {
-  const model = await resolveLlmModel();
   const system =
     "You are the margin of a steno pad. The user is listening to a live event " +
     "and jotting notes. Write ONE brief margin comment that helps the user: " +
@@ -920,7 +919,7 @@ ipcMain.handle("ai_margin_comment", async (_e, p) => {
     `User's note block: ${JSON.stringify((p.noteBlock || "").slice(0, 600))}`;
   let answer;
   try {
-    answer = (await llmChat(model, system, user)).trim();
+    answer = (await llmChat(null, system, user)).trim();
   } catch (err) {
     mainWindow?.webContents.send("transcript:error", {
       message: `Margin AI failed: ${err.message}`,
@@ -942,7 +941,6 @@ ipcMain.handle("ai_margin_comment", async (_e, p) => {
 // Selection chat: user selected a passage (transcript or notes) and asks a
 // question; the answer may draw on material from other notebook sessions.
 ipcMain.handle("ai_selection_chat", async (_e, p) => {
-  const model = await resolveLlmModel();
   const selection = (p.selection || "").slice(0, 1200);
   const question = (p.question || "").slice(0, 800);
   const context = (p.context || "").slice(0, 1200);
@@ -964,7 +962,7 @@ ipcMain.handle("ai_selection_chat", async (_e, p) => {
     `Question: ${JSON.stringify(question)}`;
   let answer;
   try {
-    answer = await llmChat(model, system, user);
+    answer = await llmChat(null, system, user);
   } catch (err) {
     mainWindow?.webContents.send("transcript:error", {
       message: `Selection chat failed: ${err.message}`,
@@ -1009,7 +1007,6 @@ ipcMain.handle("note_edit", (_e, p) => {
 
 // Per-entry AI summary, appended to the end of the entry in the stream.
 ipcMain.handle("ai_entry_summary", async (_e, p) => {
-  const model = await resolveLlmModel();
   const system =
     "You summarize one entry of a steno-pad timeline (a transcript segment " +
     "or a user note). Reply with a single terse line, max 12 words, no " +
@@ -1019,7 +1016,7 @@ ipcMain.handle("ai_entry_summary", async (_e, p) => {
     `Entry: ${JSON.stringify(String(p.text || "").slice(0, 1000))}\n` +
     `Neighbors for context: ${JSON.stringify((p.neighbors || []).slice(0, 3).join(" | ").slice(0, 800))}`;
   try {
-    const summary = (await llmChat(model, system, user)).split("\n")[0].slice(0, 200);
+    const summary = (await llmChat(null, system, user)).split("\n")[0].slice(0, 200);
     return summary || null;
   } catch (err) {
     mainWindow?.webContents.send("transcript:error", {
@@ -1042,7 +1039,6 @@ ipcMain.handle("entry_summary_add", (_e, p) => {
 // Block summaries: summarize one recording block, using the previous few
 // blocks' summaries as context. Closes the block (frontend tracks closure).
 ipcMain.handle("ai_block_summary", async (_e, p) => {
-  const model = await resolveLlmModel();
   const system =
     "You write the summary card that closes a recording block of a " +
     "steno-pad timeline. Summarize ONLY the given block in 2-4 terse " +
@@ -1058,7 +1054,7 @@ ipcMain.handle("ai_block_summary", async (_e, p) => {
       : "") +
     `Block content (transcript + notes, chronological):\n${JSON.stringify(String(p.content || "").slice(0, 6000))}`;
   try {
-    return (await llmChat(model, system, user, 120_000)).slice(0, 1200);
+    return (await llmChat(null, system, user, 120_000)).slice(0, 1200);
   } catch (err) {
     mainWindow?.webContents.send("transcript:error", {
       message: `Block summary failed: ${err.message}`,
@@ -1127,6 +1123,23 @@ ipcMain.handle("set_llm_selection", (_e, p) => {
   settings.llm = { provider: p.provider, model: p.model };
   saveSettings(settings);
   return settings.llm;
+});
+
+// Get/set appearance (theme, font family, font size)
+ipcMain.handle("get_appearance", () => {
+  const settings = loadSettings();
+  return settings.appearance || {};
+});
+
+ipcMain.handle("set_appearance", (_e, p) => {
+  const settings = loadSettings();
+  settings.appearance = {
+    theme: p.theme || "default",
+    fontFamily: p.fontFamily || "serif",
+    fontSize: p.fontSize || 15,
+  };
+  saveSettings(settings);
+  return settings.appearance;
 });
 
 // Get the current LLM selection

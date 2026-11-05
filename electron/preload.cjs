@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("steno", {
       case "list_providers":
       case "list_models":
       case "set_llm_selection":
+      case "get_appearance":
+      case "set_appearance":
       case "list_sessions":
       case "get_git_origin":
       case "flag_add":

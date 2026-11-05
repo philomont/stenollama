@@ -1,9 +1,15 @@
 /* Stenollama — one clean sheet. */
 
+/* ======== themes ========
+   data-theme on <html> swaps CSS custom properties.
+   Themes: default (cream), green-paper, dracula, solarized-dark, solarized-light
+*/
+
 :root {
   --desk: #3a352f;
   --paper: #f7f2e5;
   --paper-dim: #eee7d3;
+  --paper-bright: rgba(255,255,255,0.4);
   --ink: #26221c;
   --ink-dim: #7a7261;
   --red: #c0392b;
@@ -16,13 +22,100 @@
   --rule: #d0c7ad;
   --brown: #8a7444;
   --drawer: #d4c4a0;
+  --desk-shadow: 0 1px 0 #fff inset, 0 10px 24px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.3);
   --mono: "Courier New", ui-monospace, monospace;
   --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --font-body: var(--serif);
+  --font-size: 15px;
+}
+
+/* Green paper (easy-read) */
+[data-theme="green-paper"] {
+  --desk: #2d3326;
+  --paper: #c8d5b8;
+  --paper-dim: #b8c9a8;
+  --paper-bright: rgba(220,235,200,0.4);
+  --ink: #2a3220;
+  --ink-dim: #5a6b4e;
+  --red: #b04a3a;
+  --red-dim: rgba(176,74,58,0.1);
+  --stamp: #8a6040;
+  --blue: #2a5a3a;
+  --purple: #6a4a8a;
+  --green: #3a7a4a;
+  --amber: #c07830;
+  --rule: #a8b898;
+  --brown: #6a7a5a;
+  --drawer: #b8c9a8;
+  --desk-shadow: 0 1px 0 #e8f0d8 inset, 0 10px 24px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.2);
+}
+
+/* Dracula */
+[data-theme="dracula"] {
+  --desk: #191a21;
+  --paper: #282a36;
+  --paper-dim: #21222c;
+  --paper-bright: rgba(60,62,78,0.4);
+  --ink: #f8f8f2;
+  --ink-dim: #6272a4;
+  --red: #ff5555;
+  --red-dim: rgba(255,85,85,0.1);
+  --stamp: #bd93f9;
+  --blue: #8be9fd;
+  --purple: #bd93f9;
+  --green: #50fa7b;
+  --amber: #f1fa8c;
+  --rule: #44475a;
+  --brown: #6272a4;
+  --drawer: #21222c;
+  --desk-shadow: 0 1px 0 #44475a inset, 0 10px 24px rgba(0,0,0,0.6), 0 2px 6px rgba(0,0,0,0.4);
+}
+
+/* Solarized Dark */
+[data-theme="solarized-dark"] {
+  --desk: #00202a;
+  --paper: #002b36;
+  --paper-dim: #00212b;
+  --paper-bright: rgba(7,54,66,0.5);
+  --ink: #93a1a1;
+  --ink-dim: #586e75;
+  --red: #dc322f;
+  --red-dim: rgba(220,50,47,0.15);
+  --stamp: #b58900;
+  --blue: #268bd2;
+  --purple: #6c71c4;
+  --green: #859900;
+  --amber: #cb4b16;
+  --rule: #073642;
+  --brown: #586e75;
+  --drawer: #073642;
+  --desk-shadow: 0 1px 0 #073642 inset, 0 10px 24px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* Solarized Light */
+[data-theme="solarized-light"] {
+  --desk: #eee8d5;
+  --paper: #fdf6e3;
+  --paper-dim: #eee8d5;
+  --paper-bright: rgba(255,252,240,0.5);
+  --ink: #586e75;
+  --ink-dim: #93a1a1;
+  --red: #dc322f;
+  --red-dim: rgba(220,50,47,0.08);
+  --stamp: #b58900;
+  --blue: #268bd2;
+  --purple: #6c71c4;
+  --green: #859900;
+  --amber: #cb4b16;
+  --rule: #eee8d5;
+  --brown: #93a1a1;
+  --drawer: #eee8d5;
+  --desk-shadow: 0 1px 0 #fff inset, 0 6px 18px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.1);
 }
 
 * { box-sizing: border-box; margin: 0; }
 html, body, #root { height: 100%; }
-body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
+body { background: var(--desk); color: var(--ink); font-family: var(--font-body); font-size: var(--font-size); }
 
 /* ======== desk ======== */
 
@@ -63,14 +156,16 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 .drawer-list { list-style: none; padding: 0; margin: 0; }
 .drawer-list li {
-  padding: 8px 10px 8px 14px; border-radius: 3px;
-  font-size: 14px; cursor: pointer; color: #5c4d2e;
-  display: flex; align-items: center; gap: 10px;
-  border-left: 4px solid transparent;
+  padding: 6px 10px 6px 12px; border-radius: 3px 6px 6px 3px;
+  font-size: 14px; cursor: pointer; color: var(--brown);
+  display: flex; align-items: center; gap: 8px;
+  border-left: 3px solid transparent;
+  transition: all 0.15s ease;
 }
 .drawer-list li.active {
-  background: rgba(247,242,229,0.9); color: var(--ink);
+  background: var(--paper); color: var(--ink);
   border-left-color: var(--red);
+  font-weight: 600;
 }
 .drawer-list li.disabled { color: #a09070; cursor: default; font-style: italic; }
 
@@ -256,9 +351,9 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 }
 
 .margin-entry {
-  padding: 10px 14px; margin: 0 12px 10px;
+  padding: 8px 12px; margin: 0 10px 8px;
   border-left: 3px solid var(--rule);
-  border-radius: 0 4px 4px 0;
+  border-radius: 3px 8px 8px 3px;
 }
 .margin-entry.kind-comment { border-left-color: var(--purple); }
 .margin-entry.kind-chat { border-left-color: var(--blue); }
@@ -290,8 +385,9 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 .chat-box {
   position: absolute; left: 12px; right: 12px; z-index: 10;
   background: var(--paper); border: 1px solid var(--rule);
-  border-left: 3px solid var(--blue); border-radius: 3px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.25); padding: 10px;
+  border-left: 3px solid var(--blue);
+  border-radius: 3px 8px 8px 3px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); padding: 10px;
 }
 .chat-box-quote { font-size: 12.5px; font-style: italic; color: #3a3a5a; line-height: 19px; margin: 4px 0 8px; }
 .chat-box input {
@@ -443,4 +539,20 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
   max-height: 120px;
   overflow-y: auto;
   font-size: 12px !important;
+}
+
+/* font size controls */
+.font-size-controls {
+  display: flex; align-items: center; gap: 8px;
+}
+.font-btn {
+  width: 28px; height: 28px; border-radius: 4px;
+  border: 1px solid var(--rule); background: var(--paper);
+  font-size: 16px; cursor: pointer; color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+}
+.font-btn:hover { border-color: var(--brown); }
+.font-size-label {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  min-width: 40px; text-align: center;
 }

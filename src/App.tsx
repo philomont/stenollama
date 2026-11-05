@@ -105,6 +105,9 @@ export default function App() {
   const [models, setModels] = useState<{ id: string; label: string; type: string; size: string }[]>([]);
   const [selProvider, setSelProvider] = useState<string>("ollama");
   const [modelSearch, setModelSearch] = useState("");
+  const [theme, setTheme] = useState("default");
+  const [fontFamily, setFontFamily] = useState("serif");
+  const [fontSize, setFontSize] = useState(15);
   const [llmModel, setLlmModel] = useState<string | null>(null);
   const [sessions, setSessions] = useState<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>([]);
   const [asrError, setAsrError] = useState<string | null>(null);
@@ -180,6 +183,14 @@ export default function App() {
     backend()
       .then((b) => b.invoke<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>("list_sessions"))
       .then(setSessions)
+      .catch(() => {});
+    backend()
+      .then((b) => b.invoke<{ theme?: string; fontFamily?: string; fontSize?: number }>("get_appearance"))
+      .then((a) => {
+        if (a.theme) setTheme(a.theme);
+        if (a.fontFamily) setFontFamily(a.fontFamily);
+        if (a.fontSize) setFontSize(a.fontSize);
+      })
       .catch(() => {});
   }, []);
 
@@ -276,6 +287,16 @@ export default function App() {
   // Selection → the annotation picker pops up on the right, inline with the
   // selection. Both columns are the same page, so the anchor is measured
   // against the shared scroller's content.
+
+  // Apply theme + font settings to the document
+  useEffect(() => {
+    const el = document.documentElement;
+    el.setAttribute("data-theme", theme);
+    el.style.setProperty("--font-body", fontFamily === "serif" ? "var(--serif)" : fontFamily === "sans" ? "system-ui, -apple-system, sans-serif" : fontFamily === "mono" ? "var(--mono)" : fontFamily);
+    el.style.setProperty("--font-size", fontSize + "px");
+    // Persist
+    backend().then((b) => b.invoke("set_appearance", { theme, fontFamily, fontSize })).catch(() => {});
+  }, [theme, fontFamily, fontSize]);
 
   // Fetch models when the selected provider changes
   useEffect(() => {
@@ -657,6 +678,40 @@ export default function App() {
               <option value="whisper small">whisper small</option>
               <option value="whisper base">whisper base</option>
             </select>
+          </div>
+          <div className="setting-row">
+            <label>Theme</label>
+            <select
+              className="setting-select"
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+            >
+              <option value="default">Cream Paper (default)</option>
+              <option value="green-paper">Green Paper</option>
+              <option value="dracula">Dracula</option>
+              <option value="solarized-dark">Solarized Dark</option>
+              <option value="solarized-light">Solarized Light</option>
+            </select>
+          </div>
+          <div className="setting-row">
+            <label>Font</label>
+            <select
+              className="setting-select"
+              value={fontFamily}
+              onChange={(e) => setFontFamily(e.target.value)}
+            >
+              <option value="serif">Serif (Georgia)</option>
+              <option value="sans">Sans-serif (System)</option>
+              <option value="mono">Monospace</option>
+            </select>
+          </div>
+          <div className="setting-row">
+            <label>Size</label>
+            <div className="font-size-controls">
+              <button onClick={() => setFontSize(Math.max(12, fontSize - 1))} className="font-btn">−</button>
+              <span className="font-size-label">{fontSize}px</span>
+              <button onClick={() => setFontSize(Math.min(24, fontSize + 1))} className="font-btn">+</button>
+            </div>
           </div>
           <div className="setting-row">
             <label>Provider</label>

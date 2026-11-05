@@ -425,3 +425,4 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
   -webkit-font-smoothing: antialiased;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
+.placeholder { color: var(--ink-dim); font-style: italic; font-size: 14px; line-height: 1.6; margin: 4px 0; }

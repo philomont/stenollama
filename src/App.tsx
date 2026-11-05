@@ -179,8 +179,8 @@ export default function App() {
       .catch(() => {});
     backend()
       .then((b) => b.invoke<{ id: string; label: string }[]>("list_providers"))
-      .then(setProviders)
-      .catch(() => {});
+      .then((p) => { setProviders(p); })
+      .catch((e) => { console.error("list_providers failed:", e); });
     backend()
       .then((b) => b.invoke<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>("list_sessions"))
       .then(setSessions)
@@ -311,7 +311,7 @@ export default function App() {
           else setLlmModel(mods[0].id);
         }
       })
-      .catch(() => {});
+      .catch((e) => { console.error("list_models failed:", e); });
   }, [selProvider]);
   useEffect(() => {
     function onMouseUp() {
@@ -707,11 +707,10 @@ export default function App() {
             </select>
           </div>
           <div className="setting-row">
-            <label>Size</label>
+            <label>Text size</label>
             <div className="font-size-controls">
-              <button onClick={() => setFontSize(Math.max(12, fontSize - 1))} className="font-btn">−</button>
-              <span className="font-size-label">{fontSize}px</span>
-              <button onClick={() => setFontSize(Math.min(24, fontSize + 1))} className="font-btn">+</button>
+              <button onClick={() => setFontSize(Math.max(12, fontSize - 1))} className="font-btn" title="smaller">−</button>
+              <button onClick={() => setFontSize(Math.min(24, fontSize + 1))} className="font-btn" title="larger">+</button>
             </div>
           </div>
           <div className="setting-row">

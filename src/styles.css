@@ -120,7 +120,11 @@
 
 * { box-sizing: border-box; margin: 0; }
 html, body, #root { height: 100%; }
-body { background: var(--desk); color: var(--ink); font-family: var(--font-body); font-size: var(--font-size); }
+body {
+  background: var(--desk); color: var(--ink);
+  font-family: var(--font-body); font-size: var(--font-size);
+  zoom: calc(var(--font-size) / 15);
+}
 
 /* ======== desk ======== */
 
@@ -270,7 +274,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--font-body)
 }
 .entry:hover { border-color: var(--rule); }
 
-.segment { font-size: var(--font-size); line-height: 1.55; }
+.segment { font-size: 15px; line-height: 1.55; }
 .segment-stamp {
   font-family: var(--mono); font-size: 11px; color: var(--stamp);
   margin-right: 8px; background: rgba(163,84,63,0.12);
@@ -293,7 +297,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--font-body)
   border-radius: 3px; padding: 1px 5px; margin-bottom: 4px;
 }
 .note-ref { font-size: 12px; font-style: italic; color: var(--ink-dim); line-height: 1.4; margin: 2px 0 4px; }
-.note-block-text { font-size: var(--font-size); line-height: 1.5; white-space: pre-wrap; }
+.note-block-text { font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
 .note-image { max-width: 100%; max-height: 260px; border: 1px solid var(--rule); border-radius: 3px; margin: 4px 0; }
 .note-edit {
   width: 100%; font: inherit; font-size: 15px; line-height: 1.5;
@@ -323,7 +327,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--font-body)
   border-radius: 0 4px 4px 0;
 }
 .bs-head { font-family: var(--mono); font-size: 11px; color: var(--blue); }
-.bs-text { font-size: calc(var(--font-size) * 0.93); line-height: 1.5; margin-top: 4px; }
+.bs-text { font-size: 14px; line-height: 1.5; margin-top: 4px; }
 
 .block-footer { margin: 8px 0 18px; display: flex; justify-content: flex-end; }
 .ghost-btn {
@@ -374,7 +378,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--font-body)
 .author.ai { color: var(--blue); }
 .author.flag { color: var(--red); }
 .margin-time { color: var(--ink-dim); font-size: 11px; }
-.margin-text { font-size: calc(var(--font-size) * 0.93); line-height: 1.5; white-space: pre-wrap; }
+.margin-text { font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .note-quote { font-size: 11.5px; font-style: italic; color: var(--ink-dim); line-height: 18px; margin: 0 0 2px; }
 
 /* chat/selection */
@@ -492,7 +496,7 @@ body { background: var(--desk); color: var(--ink); font-family: var(--font-body)
   border-radius: 8px;
   background: var(--paper-bright);
   padding: 12px 14px;
-  font: inherit; font-size: var(--font-size);
+  font: inherit; font-size: 15px;
   min-height: 48px; max-height: 160px;
   color: var(--ink);
   outline: none; resize: none;

@@ -51,6 +51,27 @@ async function fetchOllamaStatus(): Promise<{
   }
 }
 
+async function fetchOllamaModels(): Promise<{ id: string; label: string; type: string; size: string }[]> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: ctrl.signal });
+    clearTimeout(t);
+    const data = await resp.json();
+    return (data.models || []).map((m: { name: string; size?: number }) => {
+      const sz = m.size || 0;
+      return {
+        id: m.name,
+        label: m.name,
+        type: sz === 0 ? "cloud" : "local",
+        size: sz > 1e9 ? (sz / 1e9).toFixed(1) + "GB" : sz > 1e6 ? Math.round(sz / 1e6) + "MB" : "cloud",
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function fetchLlmModel(): Promise<{ model: string }> {
   const prefs = ["glm-5.3-flash:cloud", "glm-5.2:cloud", "qwen3.5:cloud", "gemma4:cloud", "minimax-m3.1-flash:cloud"];
   try {
@@ -110,10 +131,22 @@ export function backend(): Promise<Backend> {
       // 3. Plain browser dev preview.
       return {
         shell: "browser" as const,
-        invoke: async <T,>(cmd: string): Promise<T> => {
+        invoke: async <T,>(cmd: string, payload?: Record<string, unknown>): Promise<T> => {
           if (cmd === "ollama_status") return fetchOllamaStatus() as Promise<T>;
           if (cmd === "get_llm_model") return fetchLlmModel() as Promise<T>;
-          throw new Error("no backend: run in Electron or Tauri");
+          if (cmd === "list_providers") return [{ id: "ollama", label: "Ollama", available: true }] as T;
+          if (cmd === "list_models") {
+            const provider = (payload as { provider?: string })?.provider || "ollama";
+            if (provider === "ollama") {
+              return fetchOllamaModels() as Promise<T>;
+            }
+            return [] as T;
+          }
+          if (cmd === "get_appearance") return {} as T;
+          if (cmd === "set_appearance") return {} as T;
+          if (cmd === "set_llm_selection") return {} as T;
+          if (cmd === "get_git_origin") return { origin: null } as T;
+          throw new Error(`no backend for ${cmd}: run in Electron or Tauri`);
         },
         listen: () => Promise.resolve(() => {}),
       };

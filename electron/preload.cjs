@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("steno", {
       case "entry_summary_add":
       case "ai_block_summary":
       case "block_summary_add":
+      case "get_git_origin":
       case "flag_add":
       case "review_notes_save":
       case "reaction_add":

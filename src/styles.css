@@ -615,3 +615,55 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 .stream .note-block.selected {
   border-color: #8a7444;
 }
+
+/* ======== drawer settings ======== */
+
+.drawer-settings {
+  margin-top: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(90, 77, 46, 0.15);
+}
+
+.setting-row {
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+.setting-row label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: #8a7444;
+}
+
+.setting-select,
+.setting-input {
+  font: inherit; font-size: 13px;
+  border: none; border-radius: 4px;
+  background: rgba(247,242,229,0.6);
+  color: #5c4d2e;
+  padding: 6px 8px;
+  width: 100%;
+}
+.setting-select:focus,
+.setting-input:focus {
+  outline: 1px solid #8a7444;
+}
+.setting-input:read-only {
+  color: #8a7444; font-size: 12px;
+}
+
+/* ======== composer frame ======== */
+
+.composer {
+  width: calc(100% - 28px);
+  margin: 0 14px 10px;
+  border: 1px solid #d0c7ad;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.4);
+  padding: 12px 14px;
+  font: inherit; font-size: 15px; min-height: 56px; color: var(--ink);
+  transition: border-color 0.15s ease;
+}
+.composer:focus {
+  border-color: #8a7444;
+}
+.composer::placeholder { color: #b3ab97; font-style: italic; }

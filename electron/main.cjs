@@ -968,6 +968,21 @@ ipcMain.handle("block_summary_add", (_e, p) => {
   }, "summaries.jsonl");
 });
 
+// Detect git remote origin for backup settings display.
+ipcMain.handle("get_git_origin", async () => {
+  const notebooksRoot = path.join(os.homedir(), "Stenollama");
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile("git", ["remote", "get-url", "origin"], { cwd: notebooksRoot }, (err, stdout) => {
+        if (err) reject(err); else resolve(stdout.trim());
+      });
+    });
+    return { origin: out || null };
+  } catch {
+    return { origin: null };
+  }
+});
+
 // Custom flags on selected passages — margin review annotations.
 ipcMain.handle("flag_add", (_e, p) => {
   return appendMargin(p.sessionDir, {

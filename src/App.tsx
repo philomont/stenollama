@@ -100,6 +100,7 @@ export default function App() {
   const [lastSession, setLastSession] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
+  const [gitOrigin, setGitOrigin] = useState<string | null>(null);
   const [asrError, setAsrError] = useState<string | null>(null);
 
   // The timeline.
@@ -155,6 +156,10 @@ export default function App() {
       .then((b) => b.invoke<OllamaStatus>("ollama_status"))
       .then(setOllama)
       .catch(() => setOllama({ local_online: false, local_version: null, cloud_online: false }));
+    backend()
+      .then((b) => b.invoke<{ origin: string | null }>("get_git_origin"))
+      .then((r) => setGitOrigin(r.origin))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -590,7 +595,6 @@ export default function App() {
   return (
     <div className="desk">
       <aside className={`drawer ${drawerOpen ? "open" : ""}`} onMouseLeave={() => setDrawerOpen(false)}>
-        <h1 className="drawer-brand">Stenollama</h1>
         <p className="drawer-label">Notebooks</p>
         <ul className="drawer-list">
           <li className="active">Inbox</li>
@@ -598,6 +602,35 @@ export default function App() {
           <li className="disabled" title="coming in #28">Meetings</li>
         </ul>
         <button className="drawer-new" disabled title="coming in #28">+ New notebook</button>
+        <div className="drawer-settings">
+          <p className="drawer-label">Settings</p>
+          <div className="setting-row">
+            <label>Transcription</label>
+            <select className="setting-select" defaultValue={engine?.label || "auto"}>
+              <option value="auto">auto</option>
+              <option value="whisper small">whisper small</option>
+              <option value="whisper base">whisper base</option>
+            </select>
+          </div>
+          <div className="setting-row">
+            <label>Save location</label>
+            <input
+              className="setting-input"
+              readOnly
+              value="~/Stenollama"
+              title="Notebooks are saved here"
+            />
+          </div>
+          <div className="setting-row">
+            <label>Git backup</label>
+            <input
+              className="setting-input"
+              readOnly
+              value={gitOrigin || "not configured"}
+              title={gitOrigin ? `Backing up to ${gitOrigin}` : "No git remote configured"}
+            />
+          </div>
+        </div>
         <div className="drawer-foot">
           <div className={`status-chip ${statusOk ? "ok" : "down"}`}>
             <span className="dot" />
@@ -612,9 +645,6 @@ export default function App() {
                     : "Ollama offline"}
           </div>
           {engine && <p className="engine-line">asr: {engine.label}</p>}
-          {lastSession && (
-            <p className="last-session" title={lastSession}>last: {lastSession.split("/").pop()}</p>
-          )}
         </div>
       </aside>
 

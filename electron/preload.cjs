@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("steno", {
       case "ai_block_summary":
       case "block_summary_add":
       case "get_llm_model":
+      case "list_sessions":
       case "get_git_origin":
       case "flag_add":
       case "review_notes_save":

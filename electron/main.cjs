@@ -968,6 +968,40 @@ ipcMain.handle("block_summary_add", (_e, p) => {
   }, "summaries.jsonl");
 });
 
+// List previous recording sessions from the notebooks directory.
+ipcMain.handle("list_sessions", async () => {
+  const notebooksRoot = path.join(os.homedir(), "Stenollama", "notebooks");
+  const sessions = [];
+  try {
+    const notebooks = fs.readdirSync(notebooksRoot);
+    for (const nb of notebooks) {
+      const nbSessions = path.join(notebooksRoot, nb, "sessions");
+      let dirs;
+      try {
+        dirs = fs.readdirSync(nbSessions).filter((d) => /^\d{4}-/.test(d)).sort().reverse();
+      } catch { continue; }
+      for (const sess of dirs.slice(0, 10)) {
+        const sessDir = path.join(nbSessions, sess);
+        // Read session.yaml for endedAt
+        let endedAt = null;
+        try {
+          const y = fs.readFileSync(path.join(sessDir, "session.yaml"), "utf8");
+          const m = y.match(/endedAt: (.+)/);
+          if (m) endedAt = m[1].trim();
+        } catch {}
+        // Count transcript segments
+        let segCount = 0;
+        try {
+          const t = fs.readFileSync(path.join(sessDir, "transcript.jsonl"), "utf8");
+          segCount = t.split("\n").filter(Boolean).length;
+        } catch {}
+        sessions.push({ notebook: nb, session: sess, endedAt, segCount });
+      }
+    }
+  } catch {}
+  return sessions;
+});
+
 // Get the currently resolved LLM model (for settings display).
 let cachedLlmModel = null;
 ipcMain.handle("get_llm_model", async () => {

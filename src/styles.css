@@ -426,3 +426,9 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 .placeholder { color: var(--ink-dim); font-style: italic; font-size: 14px; line-height: 1.6; margin: 4px 0; }
+
+/* session list items */
+.session-meta {
+  font-size: 10px; color: var(--ink-dim);
+  font-family: var(--mono); margin-left: auto;
+}

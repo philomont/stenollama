@@ -51,6 +51,26 @@ async function fetchOllamaStatus(): Promise<{
   }
 }
 
+async function fetchLlmModel(): Promise<{ model: string }> {
+  const prefs = ["glm-5.3-flash:cloud", "glm-5.2:cloud", "qwen3.5:cloud", "gemma4:cloud", "minimax-m3.1-flash:cloud"];
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: ctrl.signal });
+    clearTimeout(t);
+    const { models = [] } = await resp.json();
+    const names = new Set<string>();
+    for (const m of models) {
+      names.add(m.name);
+      names.add(m.name.split(":")[0]);
+    }
+    for (const p of prefs) {
+      if (names.has(p)) return { model: p };
+    }
+  } catch {}
+  return { model: prefs[1] };
+}
+
 // ---- Resolution ----------------------------------------------------------
 
 let cached: Promise<Backend> | null = null;
@@ -92,6 +112,7 @@ export function backend(): Promise<Backend> {
         shell: "browser" as const,
         invoke: async <T,>(cmd: string): Promise<T> => {
           if (cmd === "ollama_status") return fetchOllamaStatus() as Promise<T>;
+          if (cmd === "get_llm_model") return fetchLlmModel() as Promise<T>;
           throw new Error("no backend: run in Electron or Tauri");
         },
         listen: () => Promise.resolve(() => {}),

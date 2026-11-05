@@ -102,6 +102,7 @@ export default function App() {
   const [engine, setEngine] = useState<EngineInfo | null>(null);
   const [gitOrigin, setGitOrigin] = useState<string | null>(null);
   const [llmModel, setLlmModel] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>([]);
   const [asrError, setAsrError] = useState<string | null>(null);
 
   // The timeline.
@@ -164,6 +165,10 @@ export default function App() {
     backend()
       .then((b) => b.invoke<{ model: string }>("get_llm_model"))
       .then((r) => setLlmModel(r.model))
+      .catch(() => {});
+    backend()
+      .then((b) => b.invoke<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>("list_sessions"))
+      .then(setSessions)
       .catch(() => {});
   }, []);
 
@@ -600,11 +605,21 @@ export default function App() {
   return (
     <div className="desk">
       <aside className={`drawer ${drawerOpen ? "open" : ""}`} onMouseLeave={() => setDrawerOpen(false)}>
-        <p className="drawer-label">Notebooks</p>
+        <p className="drawer-label">Recordings</p>
         <ul className="drawer-list">
-          <li className="active">Inbox</li>
-          <li className="disabled" title="coming in #28">Research</li>
-          <li className="disabled" title="coming in #28">Meetings</li>
+          {sessions.length === 0 && (
+            <li className="disabled">no sessions yet</li>
+          )}
+          {sessions.map((s) => (
+            <li
+              key={s.session}
+              className={s.session === lastSession?.split("/")?.pop() ? "active" : ""}
+              title={`${s.notebook}/${s.session} — ${s.segCount} segments`}
+            >
+              <span>{s.session.replace(/^\d{4}-\d{2}-\d{2}-/, "")}</span>
+              <span className="session-meta">{s.segCount} seg</span>
+            </li>
+          ))}
         </ul>
         <button className="drawer-new" disabled title="coming in #28">+ New notebook</button>
         <div className="drawer-settings">

@@ -105,6 +105,7 @@ export default function App() {
   const [models, setModels] = useState<{ id: string; label: string; type: string; size: string }[]>([]);
   const [selProvider, setSelProvider] = useState<string>("ollama");
   const [modelSearch, setModelSearch] = useState("");
+  const [showModelList, setShowModelList] = useState(false);
   const [theme, setTheme] = useState("default");
   const [fontFamily, setFontFamily] = useState("serif");
   const [fontSize, setFontSize] = useState(15);
@@ -686,7 +687,7 @@ export default function App() {
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
             >
-              <option value="default">Cream Paper (default)</option>
+              <option value="default">Steno Classic</option>
               <option value="green-paper">Green Paper</option>
               <option value="dracula">Dracula</option>
               <option value="solarized-dark">Solarized Dark</option>
@@ -731,31 +732,45 @@ export default function App() {
           </div>
           <div className="setting-row">
             <label>Model</label>
-            <input
-              className="setting-input model-search"
-              value={modelSearch}
-              onChange={(e) => setModelSearch(e.target.value)}
-              placeholder="search models…"
-            />
-            <select
-              className="setting-select model-select"
-              value={llmModel || ""}
-              onChange={(e) => {
-                setLlmModel(e.target.value);
-                backend().then((b) =>
-                  b.invoke("set_llm_selection", { provider: selProvider, model: e.target.value })
-                ).catch(() => {});
-              }}
-            >
-              {models
-                .filter((m) => !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
-                .slice(0, 50)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} {m.type === "local" ? "· local" : ""} {m.size && m.size !== "cloud" ? "· " + m.size : ""}
-                  </option>
-                ))}
-            </select>
+            <div className="model-picker">
+              <input
+                className="setting-input model-input"
+                value={llmModel || modelSearch}
+                onChange={(e) => {
+                  setModelSearch(e.target.value);
+                  setShowModelList(true);
+                }}
+                onFocus={() => setShowModelList(true)}
+                onBlur={() => setTimeout(() => setShowModelList(false), 200)}
+                placeholder="type to search…"
+              />
+              {showModelList && (
+                <div className="model-list">
+                  {models
+                    .filter((m) => !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+                    .slice(0, 20)
+                    .map((m) => (
+                      <div
+                        key={m.id}
+                        className={`model-option ${m.id === llmModel ? "selected" : ""}`}
+                        onMouseDown={() => {
+                          setLlmModel(m.id);
+                          setModelSearch("");
+                          setShowModelList(false);
+                          backend().then((b) =>
+                            b.invoke("set_llm_selection", { provider: selProvider, model: m.id })
+                          ).catch(() => {});
+                        }}
+                      >
+                        {m.id}
+                        {m.type === "local" && <span className="model-tag">local</span>}
+                        {m.type === "cloud" && <span className="model-tag cloud">cloud</span>}
+                        {m.size && m.size !== "cloud" && <span className="model-tag">{m.size}</span>}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="setting-row">
             <label>Save location</label>

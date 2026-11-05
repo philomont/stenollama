@@ -298,8 +298,15 @@ body { background: var(--desk); color: var(--ink); font-family: var(--serif); }
 
 .pad-fixed {
   border-top: 1px solid var(--rule);
-  background: var(--paper); position: relative;
+  background: var(--paper);
+  display: grid;
+  grid-template-columns: 1fr 420px;
+}
+.pad-fixed-left {
   display: flex; flex-direction: column;
+}
+.pad-fixed-right {
+  border-left: 2px solid var(--red);
 }
 
 .record-cluster {

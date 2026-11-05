@@ -617,58 +617,167 @@ function startAsrLoop(s) {
   };
 }
 
-// ---------------------------------------------------- margin llm
-// Cloud text models via the local Ollama daemon (user direction: cloud for
-// text, local for audio). Margin comments + selection chat run on this model.
-const LLM_MODEL_ENV = process.env.STENO_LLM_MODEL || "";
-const LLM_MODEL_PREFS = [
-  "glm-5.3-flash:cloud",
-  "glm-5.2:cloud",
-  "qwen3.5:cloud",
-  "gemma4:cloud",
-  "minimax-m3.1-flash:cloud",
-];
+// ================================================================
+// Unified LLM provider system
+// Hierarchical selection: provider --> model (searchable)
+// Supports: Ollama (local+cloud), OpenRouter, Anthropic, OpenAI, Google
+// ================================================================
 
-async function resolveLlmModel() {
-  if (LLM_MODEL_ENV) return LLM_MODEL_ENV;
-  try {
-    const resp = await fetch(`${OLLAMA_LOCAL}/api/tags`);
-    if (resp.ok) {
-      const { models = [] } = await resp.json();
-      const names = new Set();
-      for (const m of models) {
-        names.add(m.name);
-        names.add(m.name.split(":")[0]);
-      }
-      for (const candidate of LLM_MODEL_PREFS) {
-        if (names.has(candidate)) return candidate;
-      }
-    }
-  } catch {}
-  return LLM_MODEL_PREFS[1];
+const SETTINGS_FILE = path.join(os.homedir(), ".stenollama", "settings.json");
+
+function loadSettings() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch { return {}; }
 }
 
-async function llmChat(model, system, user, timeoutMs = 90_000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+function saveSettings(settings) {
   try {
-    const resp = await fetch(`${OLLAMA_LOCAL}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        options: { temperature: 0.2 },
-        messages: [
-          ...(system ? [{ role: "system", content: system }] : []),
-          { role: "user", content: user },
-        ],
-      }),
-      signal: ctrl.signal,
-    });
-    if (!resp.ok) throw new Error(`llm http ${resp.status}: ${(await resp.text()).slice(0, 160)}`);
-    const out = await resp.json();
-    return (out?.message?.content || "").trim();
+    fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  } catch {}
+}
+
+function detectProviders() {
+  const providers = [{ id: "ollama", label: "Ollama", available: true }];
+  if (process.env.OPENROUTER_API_KEY) providers.push({ id: "openrouter", label: "OpenRouter", available: true });
+  if (process.env.ANTHROPIC_API_KEY) providers.push({ id: "anthropic", label: "Anthropic (Claude)", available: true });
+  if (process.env.OPENAI_API_KEY) providers.push({ id: "openai", label: "OpenAI", available: true });
+  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) providers.push({ id: "google", label: "Google (Gemini)", available: true });
+  return providers;
+}
+
+async function listModelsForProvider(providerId) {
+  const models = [];
+  try {
+    if (providerId === "ollama") {
+      const resp = await fetch(OLLAMA_LOCAL + "/api/tags");
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const m of (data.models || [])) {
+          const sz = m.size || 0;
+          models.push({ id: m.name, label: m.name, provider: "ollama", type: sz === 0 ? "cloud" : "local", size: sz > 1e9 ? (sz/1e9).toFixed(1) + "GB" : sz > 1e6 ? Math.round(sz/1e6) + "MB" : "cloud" });
+        }
+      }
+    } else if (providerId === "openrouter") {
+      const resp = await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: "Bearer " + process.env.OPENROUTER_API_KEY } });
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const m of (data.data || [])) {
+          models.push({ id: m.id, label: m.id, provider: "openrouter", type: "cloud", size: "" });
+        }
+      }
+    } else if (providerId === "anthropic") {
+      const resp = await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" } });
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const m of (data.data || [])) {
+          models.push({ id: m.id, label: m.id, provider: "anthropic", type: "cloud", size: "" });
+        }
+      }
+    } else if (providerId === "openai") {
+      const resp = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: "Bearer " + process.env.OPENAI_API_KEY } });
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const m of (data.data || [])) {
+          if (m.id.startsWith("gpt") || m.id.startsWith("o1") || m.id.startsWith("o3")) {
+            models.push({ id: m.id, label: m.id, provider: "openai", type: "cloud", size: "" });
+          }
+        }
+      }
+    } else if (providerId === "google") {
+      const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" + key);
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const m of (data.models || [])) {
+          if (m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent")) {
+            models.push({ id: m.name.replace("models/", ""), label: m.displayName || m.name, provider: "google", type: "cloud", size: "" });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[stenollama] listModels(" + providerId + ") failed:", err.message);
+  }
+  return models;
+}
+
+async function getLlmSelection() {
+  const settings = loadSettings();
+  if (settings.llm && settings.llm.provider && settings.llm.model) return settings.llm;
+  const models = await listModelsForProvider("ollama");
+  const preferred = models.find(function(m) { return m.id === "glm-5.3-flash:cloud"; });
+  const fallback = preferred || models.find(function(m) { return m.id === "glm-5.2:cloud"; }) || models[0];
+  return { provider: "ollama", model: fallback ? fallback.id : "glm-5.3-flash:cloud" };
+}
+
+async function llmChat(_model, system, user, timeoutMs) {
+  timeoutMs = timeoutMs || 90000;
+  const sel = await getLlmSelection();
+  const provider = sel.provider;
+  const model = sel.model;
+  const ctrl = new AbortController();
+  const t = setTimeout(function() { ctrl.abort(); }, timeoutMs);
+  try {
+    var text;
+    var messages = [];
+    if (system) messages.push({ role: "system", content: system });
+    messages.push({ role: "user", content: user });
+
+    if (provider === "ollama") {
+      var resp = await fetch(OLLAMA_LOCAL + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: model, stream: false, options: { temperature: 0.2 }, messages: messages }),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error("ollama " + resp.status + ": " + (await resp.text()).slice(0, 160));
+      var out = await resp.json();
+      text = out && out.message ? out.message.content : null;
+    } else if (provider === "openrouter") {
+      var resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + process.env.OPENROUTER_API_KEY },
+        body: JSON.stringify({ model: model, messages: messages, max_tokens: 500 }),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error("openrouter " + resp.status + ": " + (await resp.text()).slice(0, 160));
+      var out = await resp.json();
+      text = out && out.choices && out.choices[0] ? out.choices[0].message.content : null;
+    } else if (provider === "anthropic") {
+      var body = { model: model, max_tokens: 500, messages: [{ role: "user", content: user }] };
+      if (system) body.system = system;
+      var resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error("anthropic " + resp.status + ": " + (await resp.text()).slice(0, 160));
+      var out = await resp.json();
+      text = out && out.content && out.content[0] ? out.content[0].text : null;
+    } else if (provider === "openai") {
+      var resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + process.env.OPENAI_API_KEY },
+        body: JSON.stringify({ model: model, messages: messages, max_tokens: 500 }),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error("openai " + resp.status + ": " + (await resp.text()).slice(0, 160));
+      var out = await resp.json();
+      text = out && out.choices && out.choices[0] ? out.choices[0].message.content : null;
+    } else if (provider === "google") {
+      var gkey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      var resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + gkey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: system ? system + "\n\n" + user : user }] }] }),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) throw new Error("google " + resp.status + ": " + (await resp.text()).slice(0, 160));
+      var out = await resp.json();
+      text = out && out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] ? out.candidates[0].content.parts[0].text : null;
+    }
+    return (text || "").trim();
   } finally {
     clearTimeout(t);
   }
@@ -1002,11 +1111,28 @@ ipcMain.handle("list_sessions", async () => {
   return sessions;
 });
 
-// Get the currently resolved LLM model (for settings display).
-let cachedLlmModel = null;
+// List available LLM providers (detected via env vars)
+ipcMain.handle("list_providers", async () => {
+  return detectProviders();
+});
+
+// List models for a specific provider
+ipcMain.handle("list_models", async (_e, p) => {
+  return listModelsForProvider(p?.provider || "ollama");
+});
+
+// Set the LLM provider + model selection
+ipcMain.handle("set_llm_selection", (_e, p) => {
+  const settings = loadSettings();
+  settings.llm = { provider: p.provider, model: p.model };
+  saveSettings(settings);
+  return settings.llm;
+});
+
+// Get the current LLM selection
 ipcMain.handle("get_llm_model", async () => {
-  cachedLlmModel = await resolveLlmModel();
-  return { model: cachedLlmModel };
+  const sel = await getLlmSelection();
+  return sel;
 });
 
 // Detect git remote origin for backup settings display.

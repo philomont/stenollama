@@ -101,6 +101,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
   const [gitOrigin, setGitOrigin] = useState<string | null>(null);
+  const [providers, setProviders] = useState<{ id: string; label: string }[]>([]);
+  const [models, setModels] = useState<{ id: string; label: string; type: string; size: string }[]>([]);
+  const [selProvider, setSelProvider] = useState<string>("ollama");
+  const [modelSearch, setModelSearch] = useState("");
   const [llmModel, setLlmModel] = useState<string | null>(null);
   const [sessions, setSessions] = useState<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>([]);
   const [asrError, setAsrError] = useState<string | null>(null);
@@ -163,8 +167,15 @@ export default function App() {
       .then((r) => setGitOrigin(r.origin))
       .catch(() => {});
     backend()
-      .then((b) => b.invoke<{ model: string }>("get_llm_model"))
-      .then((r) => setLlmModel(r.model))
+      .then((b) => b.invoke<{ provider: string; model: string }>("get_llm_model"))
+      .then((r) => {
+        setLlmModel(r.model);
+        setSelProvider(r.provider);
+      })
+      .catch(() => {});
+    backend()
+      .then((b) => b.invoke<{ id: string; label: string }[]>("list_providers"))
+      .then(setProviders)
       .catch(() => {});
     backend()
       .then((b) => b.invoke<{ notebook: string; session: string; endedAt: string | null; segCount: number }[]>("list_sessions"))
@@ -265,6 +276,21 @@ export default function App() {
   // Selection → the annotation picker pops up on the right, inline with the
   // selection. Both columns are the same page, so the anchor is measured
   // against the shared scroller's content.
+
+  // Fetch models when the selected provider changes
+  useEffect(() => {
+    backend()
+      .then((b) => b.invoke<{ id: string; label: string; type: string; size: string }[]>("list_models", { provider: selProvider }))
+      .then((mods) => {
+        setModels(mods);
+        if (!llmModel && mods.length > 0) {
+          const preferred = mods.find((m) => m.id === "glm-5.3-flash:cloud");
+          if (preferred) setLlmModel(preferred.id);
+          else setLlmModel(mods[0].id);
+        }
+      })
+      .catch(() => {});
+  }, [selProvider]);
   useEffect(() => {
     function onMouseUp() {
       const sel = window.getSelection();
@@ -633,13 +659,48 @@ export default function App() {
             </select>
           </div>
           <div className="setting-row">
-            <label>Ollama model</label>
+            <label>Provider</label>
+            <select
+              className="setting-select"
+              value={selProvider}
+              onChange={(e) => {
+                setSelProvider(e.target.value);
+                setLlmModel(null);
+                setModelSearch("");
+              }}
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="setting-row">
+            <label>Model</label>
             <input
-              className="setting-input"
-              readOnly
-              value={llmModel || "resolving…"}
-              title="LLM used for AI chat, margin comments, and summaries"
+              className="setting-input model-search"
+              value={modelSearch}
+              onChange={(e) => setModelSearch(e.target.value)}
+              placeholder="search models…"
             />
+            <select
+              className="setting-select model-select"
+              value={llmModel || ""}
+              onChange={(e) => {
+                setLlmModel(e.target.value);
+                backend().then((b) =>
+                  b.invoke("set_llm_selection", { provider: selProvider, model: e.target.value })
+                ).catch(() => {});
+              }}
+            >
+              {models
+                .filter((m) => !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+                .slice(0, 50)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id} {m.type === "local" ? "· local" : ""} {m.size && m.size !== "cloud" ? "· " + m.size : ""}
+                  </option>
+                ))}
+            </select>
           </div>
           <div className="setting-row">
             <label>Save location</label>

@@ -968,6 +968,13 @@ ipcMain.handle("block_summary_add", (_e, p) => {
   }, "summaries.jsonl");
 });
 
+// Get the currently resolved LLM model (for settings display).
+let cachedLlmModel = null;
+ipcMain.handle("get_llm_model", async () => {
+  cachedLlmModel = await resolveLlmModel();
+  return { model: cachedLlmModel };
+});
+
 // Detect git remote origin for backup settings display.
 ipcMain.handle("get_git_origin", async () => {
   const notebooksRoot = path.join(os.homedir(), "Stenollama");

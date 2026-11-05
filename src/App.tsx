@@ -101,6 +101,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
   const [gitOrigin, setGitOrigin] = useState<string | null>(null);
+  const [llmModel, setLlmModel] = useState<string | null>(null);
   const [asrError, setAsrError] = useState<string | null>(null);
 
   // The timeline.
@@ -159,6 +160,10 @@ export default function App() {
     backend()
       .then((b) => b.invoke<{ origin: string | null }>("get_git_origin"))
       .then((r) => setGitOrigin(r.origin))
+      .catch(() => {});
+    backend()
+      .then((b) => b.invoke<{ model: string }>("get_llm_model"))
+      .then((r) => setLlmModel(r.model))
       .catch(() => {});
   }, []);
 
@@ -613,6 +618,15 @@ export default function App() {
             </select>
           </div>
           <div className="setting-row">
+            <label>Ollama model</label>
+            <input
+              className="setting-input"
+              readOnly
+              value={llmModel || "resolving…"}
+              title="LLM used for AI chat, margin comments, and summaries"
+            />
+          </div>
+          <div className="setting-row">
             <label>Save location</label>
             <input
               className="setting-input"
@@ -841,8 +855,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* Recording controls + composer, ON the paper. */}
+          {/* Recording controls + composer, ON the paper — left column only. */}
           <div className="pad-fixed">
+            <div className="pad-fixed-left">
             <div className="paper-controls">
               <button
                 className={`paper-btn ${recording && source === "system" ? "recording" : ""}`}
@@ -921,6 +936,8 @@ export default function App() {
               onPaste={onComposePaste}
               placeholder="write a note — Enter adds it to the timeline · paste images · #tags · links"
             />
+            </div>
+            <div className="pad-fixed-right" />
           </div>
         </section>
 
